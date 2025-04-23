@@ -1,0 +1,10 @@
+name: vosk-api
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.8  # 根据您的需要调整 Python 版本
+  - pip
+  - pip:
+    - vosk
+    - pytest  # 添加您需要的测试工具

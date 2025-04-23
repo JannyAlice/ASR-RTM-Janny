@@ -1,13 +1,17 @@
 # 忽略所有文件夹
 */
+!/src/
 
 # 但允许 .gitignore 文件本身被跟踪
 !.gitignore
-
+# 忽略所有以"."开头的文件夹和文件
+.*
 # 忽略所有 .log 文件
 *.log
 # 忽略所有 .bat 文件
 *.bat
-# 忽略所有 .txt 文件（除了 keep.txt）
+# 忽略所有 .txt .ps1 .cursorrules 文件（除了 keep.txt）
 *.txt
+*.ps1
+
 !keep.txt
