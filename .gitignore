@@ -1,18 +1,31 @@
-# 忽略所有文件夹
-*/
-# 注意 !/src/ 不会将src下的文件夹跟踪上传，如下才会
-!/src/**/*  
+# 允许 src/ 及其所有子目录和文件
+!/src/
+!/src/**/*
 
-# 但允许 .gitignore 文件本身被跟踪
-!.gitignore
-# 忽略所有以"."开头的文件夹和文件
+# 忽略其他无关内容
 .*
-# 忽略所有 .log 文件
-*.log
-# 忽略所有 .bat 文件
-*.bat
-# 忽略所有 .txt .ps1 .cursorrules 文件（除了 keep.txt）
-*.txt
-*.ps1
+!.gitignore
 
+# 忽略特定文件类型（保留 keep.txt）
+*.log
+*.bat
+*.txt
+*.yml
 !keep.txt
+*.ps1
+*.cursorrules
+
+# 显式忽略不需要的目录（如缓存、依赖等）
+__pycache__/
+.specstory/
+.vscode/
+assets/
+config/
+docs/
+logs/
+models/
+python_examples/
+reports/
+test_tools/
+tests/
+transcripts/
