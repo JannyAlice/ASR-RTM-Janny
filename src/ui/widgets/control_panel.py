@@ -209,8 +209,12 @@ class ControlPanel(QWidget):
         Args:
             status: 状态文本
         """
-        # 通过信号将状态信息发送到主窗口
-        self.parent().signals.status_updated.emit(status)
+        # 安全访问信号
+        parent = self.parent()
+        if hasattr(parent, 'signals') and hasattr(parent.signals, 'status_updated'):
+            parent.signals.status_updated.emit(status)
+        else:
+            print(f"状态更新: {status}")  # 备用日志输出
 
     def reset(self):
         """重置控制面板状态"""

@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
 
         # 保存当前窗口标志位
         current_flags = self.windowFlags()
-        
+
         # 设置窗口置顶
         if window_config.get('always_on_top', True):
             # 确保保留其他标志位
@@ -170,8 +170,19 @@ class MainWindow(QMainWindow):
             self.signals.error_occurred.emit("停止音频捕获失败")
             return
 
-        # 更新状态
-        self.signals.status_updated.emit("转录已停止")
+        # 保存转录文本
+        try:
+            save_path = self.subtitle_widget.save_transcript()
+            if save_path:
+                # 更新状态
+                self.signals.status_updated.emit(f"转录已停止并保存到: {save_path}")
+            else:
+                # 更新状态
+                self.signals.status_updated.emit("转录已停止，但没有内容可保存")
+        except Exception as e:
+            print(f"保存转录文本错误: {e}")
+            # 更新状态
+            self.signals.status_updated.emit("转录已停止，但保存失败")
 
     def _on_device_selected(self, device):
         """设备选择处理"""
@@ -187,8 +198,19 @@ class MainWindow(QMainWindow):
         # 重置控制面板
         self.control_panel.reset()
 
-        # 更新状态
-        self.signals.status_updated.emit("转录已完成")
+        # 保存转录文本
+        try:
+            save_path = self.subtitle_widget.save_transcript()
+            if save_path:
+                # 更新状态
+                self.signals.status_updated.emit(f"转录已完成并保存到: {save_path}")
+            else:
+                # 更新状态
+                self.signals.status_updated.emit("转录已完成，但没有内容可保存")
+        except Exception as e:
+            print(f"保存转录文本错误: {e}")
+            # 更新状态
+            self.signals.status_updated.emit("转录已完成，但保存失败")
 
     @pyqtSlot(str)
     def _show_error(self, error_message):
@@ -222,7 +244,7 @@ class MainWindow(QMainWindow):
     def _prepare_file_transcription(self, file_path, duration, file_size_mb):
         """
         准备文件转录
-        
+
         Args:
             file_path: 文件路径
             duration: 文件时长(秒)
@@ -230,7 +252,7 @@ class MainWindow(QMainWindow):
         """
         # 根据文件大小选择转录方法
         large_file_threshold = 20  # MB
-        
+
         if file_size_mb > large_file_threshold:
             self.signals.status_updated.emit(
                 f"检测到大型文件: {file_size_mb:.2f}MB，准备使用增强模式处理"
@@ -239,7 +261,7 @@ class MainWindow(QMainWindow):
             self.signals.status_updated.emit(
                 f"检测到普通文件: {file_size_mb:.2f}MB，准备使用标准模式处理"
             )
-        
+
     def set_rtm_model(self, model_name):
         """
         设置RTM模型
@@ -424,28 +446,28 @@ class MainWindow(QMainWindow):
     def _on_file_selected(self, file_path):
         """
         文件选择回调
-        
+
         Args:
             file_path: 选择的文件路径
         """
         if not file_path:
             return
-        
+
         try:
             self.file_path = file_path
             self.signals.status_updated.emit(f"已选择文件: {os.path.basename(file_path)}")
             self.subtitle_widget.update_text(f"已选择文件: {os.path.basename(file_path)}")
-            
+
             # 检查文件是否存在
             if not os.path.exists(file_path):
                 self.signals.error_occurred.emit(f"文件不存在: {file_path}")
                 return
-            
+
             # 获取文件信息
             try:
                 # 获取文件大小
                 file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-                
+
                 # 获取文件时长
                 probe = subprocess.run([
                     'ffprobe',
@@ -454,21 +476,21 @@ class MainWindow(QMainWindow):
                     '-show_format',
                     file_path
                 ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                
+
                 probe_data = json.loads(probe.stdout)
                 duration = float(probe_data['format']['duration'])
-                
+
                 self.signals.status_updated.emit(
                     f"文件信息: {os.path.basename(file_path)} ({file_size_mb:.2f}MB, {duration:.2f}秒)"
                 )
-                
+
                 # 准备转录
                 self._prepare_file_transcription(file_path, duration, file_size_mb)
-                
+
             except Exception as e:
                 logging.error(f"获取文件信息错误: {e}")
                 self.signals.error_occurred.emit(f"获取文件信息错误: {e}")
-            
+
         except Exception as e:
             logging.error(f"处理文件错误: {e}")
             self.signals.error_occurred.emit(f"处理文件错误: {e}")

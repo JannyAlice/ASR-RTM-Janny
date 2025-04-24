@@ -170,14 +170,43 @@ class AudioProcessor:
                     data = (data * 32768).astype(np.int16).tobytes()
 
                     # 处理音频数据
-                    if recognizer.AcceptWaveform(data):
-                        result = recognizer.Result()
-                        result_json = json.loads(result)
+                    try:
+                        if recognizer.AcceptWaveform(data):
+                            result = recognizer.Result()
+                            # 兼容字符串和字典两种格式
+                            if isinstance(result, str):
+                                result_json = json.loads(result)
+                            else:
+                                result_json = result
 
-                        if 'text' in result_json and result_json['text'].strip():
-                            self.signals.new_text.emit(result_json['text'])
-                    else:
-                        partial = recognizer.PartialResult()
+                            if 'text' in result_json and result_json['text'].strip():
+                                # 添加标点符号和首字母大写
+                                text = result_json['text'].strip()
+                                text = text[0].upper() + text[1:]
+                                if text[-1] not in ['.', '?', '!']:
+                                    text += '.'
+                                self.signals.new_text.emit(text)
+                        else:
+                            partial_result = recognizer.PartialResult()
+                            
+                            # 统一处理所有可能的返回格式
+                            if isinstance(partial_result, str):
+                                partial = json.loads(partial_result)
+                            elif isinstance(partial_result, dict):
+                                partial = partial_result
+                            elif hasattr(partial_result, 'partial'):
+                                partial = {'partial': str(partial_result.partial)}
+                            else:
+                                partial = {'partial': str(partial_result)}
+                            
+                            # 确保partial字段存在且有效
+                            partial_text = partial.get('partial', '').strip()
+                            if partial_text:
+                                self.signals.new_text.emit("PARTIAL:" + partial_text)
+                    except Exception as e:
+                        self.signals.error_occurred.emit(f"音频处理错误: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
                         partial_json = json.loads(partial)
 
                         if 'partial' in partial_json and partial_json['partial'].strip():
