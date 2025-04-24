@@ -30,6 +30,10 @@ class ControlPanel(QWidget):
         self.colors_config = self.config.get_ui_config('colors', {})
         self.styles_config = self.config.get_ui_config('styles', {})
 
+        # 转录模式标志
+        self.transcription_mode = "system"  # 默认为系统音频模式
+        self.current_file = None
+
         # 创建控件
         self._create_widgets()
 
@@ -65,13 +69,13 @@ class ControlPanel(QWidget):
         # 创建水平布局
         controls_layout = QHBoxLayout()
         controls_layout.setSpacing(15)  # 设置控件间距
-        
+
         # 按新顺序添加控件
         controls_layout.addWidget(self.start_button)
         controls_layout.addWidget(self.record_button)
         controls_layout.addWidget(self.progress_bar)
         controls_layout.addWidget(self.device_combo)
-        
+
         # 设置进度条可伸缩
         controls_layout.setStretchFactor(self.progress_bar, 1)
 
@@ -146,6 +150,8 @@ class ControlPanel(QWidget):
                 border-radius: 3px;
                 text-align: center;
                 background-color: rgba(40, 40, 40, 180);
+                font-weight: bold;
+                color: white;
             }
             QProgressBar::chunk {
                 background-color: rgba(74, 144, 226, 180);
@@ -154,20 +160,71 @@ class ControlPanel(QWidget):
             }
         """)
 
+        # 设置设备下拉列表样式
+        self.device_combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 1px 18px 1px 3px;
+                background-color: rgba(40, 40, 40, 180);
+                color: white;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 15px;
+                border-left-width: 1px;
+                border-left-color: #555;
+                border-left-style: solid;
+                border-top-right-radius: 3px;
+                border-bottom-right-radius: 3px;
+            }
+            QComboBox::down-arrow {
+                image: url(:/images/dropdown.png);
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #555;
+                selection-background-color: rgba(74, 144, 226, 180);
+                background-color: rgba(40, 40, 40, 180);
+                color: white;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 20px;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: rgba(74, 144, 226, 180);
+            }
+        """)
+
     def _on_transcribe_clicked(self):
         """转录按钮点击处理"""
         if not self.is_transcribing:
             # 开始转录模式
-            self.start_button.setText("停止转录")
+            if hasattr(self, 'transcription_mode') and self.transcription_mode == "file":
+                self.start_button.setText("停止文件转录")
+            else:
+                self.start_button.setText("停止转录")
+
             self.device_combo.setEnabled(False)
             self.record_button.setEnabled(False)
             self.start_clicked.emit()
         else:
             # 停止转录模式
-            self.start_button.setText("开始转录")
-            self.device_combo.setEnabled(True)
-            self.record_button.setEnabled(True)
+            if hasattr(self, 'transcription_mode') and self.transcription_mode == "file":
+                self.start_button.setText("开始转录文件")
+            else:
+                self.start_button.setText("开始转录")
+
+            # 只有在文件模式时才禁用设备选择和录音按钮
+            if hasattr(self, 'transcription_mode'):
+                self.device_combo.setEnabled(self.transcription_mode != "file")
+                self.record_button.setEnabled(self.transcription_mode != "file")
+            else:
+                self.device_combo.setEnabled(True)
+                self.record_button.setEnabled(True)
+
             self.stop_clicked.emit()
+
         self.is_transcribing = not self.is_transcribing
 
     def _on_record_clicked(self):
@@ -226,3 +283,29 @@ class ControlPanel(QWidget):
         self.is_transcribing = False
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("%p% - %v/%m")
+
+    def set_transcription_mode(self, mode, file_name=None):
+        """
+        设置转录模式
+
+        Args:
+            mode: 转录模式 ('system' 或 'file')
+            file_name: 文件名（仅在文件模式下使用）
+        """
+        self.transcription_mode = mode
+        self.current_file = file_name
+
+        if mode == "file":
+            # 文件转录模式
+            self.start_button.setText("开始转录文件")
+            self.device_combo.setEnabled(False)
+            self.record_button.setEnabled(False)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("准备转录文件...")
+        else:
+            # 系统音频模式
+            self.start_button.setText("开始转录")
+            self.device_combo.setEnabled(True)
+            self.record_button.setEnabled(True)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("%p% - %v/%m")

@@ -8,7 +8,7 @@ import logging
 import subprocess
 import json
 from PyQt5.QtWidgets import QMainWindow, QVBoxLayout, QWidget, QFileDialog, QMessageBox
-from PyQt5.QtCore import Qt, pyqtSlot
+from PyQt5.QtCore import Qt, pyqtSlot, QTimer
 
 from src.ui.menu.main_menu import MainMenu
 from src.ui.widgets.subtitle_widget import SubtitleWidget
@@ -18,6 +18,13 @@ from src.core.asr.model_manager import ASRModelManager
 from src.core.audio.audio_processor import AudioProcessor
 from src.utils.config_manager import config_manager
 from src.utils.com_handler import com_handler
+
+# 条件导入 FileTranscriber
+try:
+    from src.core.audio.file_transcriber import FileTranscriber
+    HAS_FILE_TRANSCRIBER = True
+except ImportError:
+    HAS_FILE_TRANSCRIBER = False
 
 class MainWindow(QMainWindow):
     """主窗口类"""
@@ -38,8 +45,17 @@ class MainWindow(QMainWindow):
         # 创建音频处理器
         self.audio_processor = AudioProcessor(self.signals)
 
+        # 创建文件转录器（如果可用）
+        self.file_transcriber = None
+        if HAS_FILE_TRANSCRIBER:
+            self.file_transcriber = FileTranscriber(self.signals)
+
         # 加载配置
         self.config = config_manager
+
+        # 转录模式标志
+        self.is_file_mode = False
+        self.file_path = None
 
         # 初始化UI
         self._init_ui()
@@ -139,9 +155,25 @@ class MainWindow(QMainWindow):
         # 设置设备列表
         self.control_panel.set_devices(devices)
 
-        # 如果有设备，选择第一个
+        # 如果有设备，尝试查找并选择 "CABLE in 16 ch"，如果没有则选择第一个
         if devices:
-            self.audio_processor.set_current_device(devices[0])
+            # 默认选择第一个设备
+            default_device = devices[0]
+
+            # 尝试查找 "CABLE in 16 ch" 设备
+            for device in devices:
+                if "CABLE" in device.name and "16 ch" in device.name:
+                    default_device = device
+                    break
+
+            # 设置当前设备
+            self.audio_processor.set_current_device(default_device)
+
+            # 在设备下拉列表中选中该设备
+            for i in range(self.control_panel.device_combo.count()):
+                if self.control_panel.device_combo.itemText(i) == default_device.name:
+                    self.control_panel.device_combo.setCurrentIndex(i)
+                    break
 
     @pyqtSlot()
     def _on_start_clicked(self):
@@ -153,34 +185,128 @@ class MainWindow(QMainWindow):
             self.control_panel.reset()
             return
 
-        # 开始捕获音频
-        if not self.audio_processor.start_capture(recognizer):
-            self.signals.error_occurred.emit("开始音频捕获失败")
-            self.control_panel.reset()
-            return
+        # 清空字幕窗口的内容
+        if hasattr(self.subtitle_widget, 'transcript_text'):
+            self.subtitle_widget.transcript_text = []
+        if hasattr(self.subtitle_widget, 'output_file'):
+            self.subtitle_widget.output_file = None
 
-        # 更新状态
-        self.signals.status_updated.emit("正在转录...")
+        # 重置保存标志
+        MainWindow._has_saved_transcript = False
+
+        # 根据当前模式执行不同的转录功能
+        if self.is_file_mode and HAS_FILE_TRANSCRIBER and self.file_transcriber:
+            # 文件转录模式
+            if not self.file_path:
+                self.signals.error_occurred.emit("请先选择要转录的文件")
+                self.control_panel.reset()
+                return
+
+            # 开始文件转录
+            if not self.file_transcriber.start_transcription(self.file_path, recognizer):
+                self.signals.error_occurred.emit("开始文件转录失败")
+                self.control_panel.reset()
+                return
+
+            # 更新状态
+            self.signals.status_updated.emit(f"正在转录文件: {os.path.basename(self.file_path)}...")
+
+            # 禁用相关菜单项
+            self.menu_bar.update_menu_state(is_recording=True)
+        else:
+            # 系统音频模式（默认模式或文件转录不可用时）
+            if self.is_file_mode:
+                # 如果文件转录不可用，回退到系统音频模式
+                self.is_file_mode = False
+                self.signals.status_updated.emit("文件转录功能不可用，已切换到系统音频模式")
+
+            # 开始系统音频捕获
+            if not self.audio_processor.start_capture(recognizer):
+                self.signals.error_occurred.emit("开始音频捕获失败")
+                self.control_panel.reset()
+                return
+
+            # 更新状态
+            self.signals.status_updated.emit("正在转录系统音频...")
+
+            # 禁用相关菜单项
+            self.menu_bar.update_menu_state(is_recording=True)
+
+    # 用于跟踪是否已保存文件
+    _has_saved_transcript = False
 
     @pyqtSlot()
     def _on_stop_clicked(self):
         """停止按钮点击处理"""
-        # 停止捕获音频
-        if not self.audio_processor.stop_capture():
-            self.signals.error_occurred.emit("停止音频捕获失败")
-            return
+        # 重置保存标志
+        MainWindow._has_saved_transcript = False
+
+        # 根据当前模式执行不同的停止功能
+        if self.is_file_mode and HAS_FILE_TRANSCRIBER and self.file_transcriber:
+            # 文件转录模式
+            if not self.file_transcriber.stop_transcription():
+                self.signals.error_occurred.emit("停止文件转录失败")
+                return
+        else:
+            # 系统音频模式
+            if not self.audio_processor.stop_capture():
+                self.signals.error_occurred.emit("停止音频捕获失败")
+                return
+
+        # 重新启用相关菜单项
+        self.menu_bar.update_menu_state(is_recording=False)
 
         # 保存转录文本
         try:
-            save_path = self.subtitle_widget.save_transcript()
-            if save_path:
+            # 直接获取转录文本
+            if hasattr(self.subtitle_widget, 'transcript_text') and self.subtitle_widget.transcript_text:
+                # 确保 transcripts 目录存在
+                import os
+                import time
+                save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "transcripts")
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+
+                # 生成带时间戳的文件名
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = f"transcript_{timestamp}.txt"
+
+                # 完整的保存路径
+                save_path = os.path.join(save_dir, filename)
+
+                # 保存文件
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(self.subtitle_widget.transcript_text))
+
+                # 设置保存标志
+                MainWindow._has_saved_transcript = True
+
                 # 更新状态
                 self.signals.status_updated.emit(f"转录已停止并保存到: {save_path}")
+
+                # 使用延迟确保在字幕窗口显示保存信息
+                def update_subtitle_with_save_info():
+                    # 获取当前转录文本
+                    current_text = self.subtitle_widget.subtitle_label.text()
+
+                    # 确保保存信息显示在最下方
+                    if "转录已保存到" not in current_text:
+                        # 添加保存信息
+                        save_info = f"\n\n转录已停止并保存到: {save_path}"
+                        self.subtitle_widget.subtitle_label.setText(current_text + save_info)
+
+                        # 滚动到底部
+                        self.subtitle_widget._scroll_to_bottom()
+
+                # 使用较长的延迟确保信息显示
+                QTimer.singleShot(500, update_subtitle_with_save_info)
             else:
                 # 更新状态
                 self.signals.status_updated.emit("转录已停止，但没有内容可保存")
         except Exception as e:
             print(f"保存转录文本错误: {e}")
+            import traceback
+            traceback.print_exc()
             # 更新状态
             self.signals.status_updated.emit("转录已停止，但保存失败")
 
@@ -188,9 +314,19 @@ class MainWindow(QMainWindow):
         """设备选择处理"""
         # 设置当前设备
         self.audio_processor.set_current_device(device)
-        # 在内容窗口显示设备信息
-        self.subtitle_widget.update_text(f"已选择设备: {device.name}")
+
+        # 在状态栏显示设备信息（即使空间有限也尝试显示）
         self.signals.status_updated.emit(f"已选择设备: {device.name}")
+
+        # 在字幕窗口显示设备信息
+        device_info = f"已选择设备: {device.name}"
+
+        # 只有在没有进行转录时才更新字幕窗口
+        if not self.control_panel.is_transcribing:
+            self.subtitle_widget.transcript_text = []
+            self.subtitle_widget.subtitle_label.setText(device_info)
+            # 滚动到顶部
+            QTimer.singleShot(100, lambda: self.subtitle_widget.verticalScrollBar().setValue(0))
 
     @pyqtSlot()
     def _on_transcription_finished(self):
@@ -198,17 +334,65 @@ class MainWindow(QMainWindow):
         # 重置控制面板
         self.control_panel.reset()
 
+        # 重新启用相关菜单项
+        self.menu_bar.update_menu_state(is_recording=False)
+
+        # 如果已经保存过文件，则不再保存
+        if MainWindow._has_saved_transcript:
+            self.signals.status_updated.emit("转录已完成")
+            return
+
         # 保存转录文本
         try:
-            save_path = self.subtitle_widget.save_transcript()
-            if save_path:
+            # 直接获取转录文本
+            if hasattr(self.subtitle_widget, 'transcript_text') and self.subtitle_widget.transcript_text:
+                # 确保 transcripts 目录存在
+                import os
+                import time
+                save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "transcripts")
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+
+                # 生成带时间戳的文件名
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = f"transcript_{timestamp}.txt"
+
+                # 完整的保存路径
+                save_path = os.path.join(save_dir, filename)
+
+                # 保存文件
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(self.subtitle_widget.transcript_text))
+
+                # 设置保存标志
+                MainWindow._has_saved_transcript = True
+
                 # 更新状态
                 self.signals.status_updated.emit(f"转录已完成并保存到: {save_path}")
+
+                # 使用延迟确保在字幕窗口显示保存信息
+                def update_subtitle_with_save_info():
+                    # 获取当前转录文本
+                    current_text = self.subtitle_widget.subtitle_label.text()
+
+                    # 确保保存信息显示在最下方
+                    if "转录已保存到" not in current_text:
+                        # 添加保存信息
+                        save_info = f"\n\n转录已完成并保存到: {save_path}"
+                        self.subtitle_widget.subtitle_label.setText(current_text + save_info)
+
+                        # 滚动到底部
+                        self.subtitle_widget._scroll_to_bottom()
+
+                # 使用较长的延迟确保信息显示
+                QTimer.singleShot(500, update_subtitle_with_save_info)
             else:
                 # 更新状态
                 self.signals.status_updated.emit("转录已完成，但没有内容可保存")
         except Exception as e:
             print(f"保存转录文本错误: {e}")
+            import traceback
+            traceback.print_exc()
             # 更新状态
             self.signals.status_updated.emit("转录已完成，但保存失败")
 
@@ -224,9 +408,30 @@ class MainWindow(QMainWindow):
         Args:
             language: 语言代码
         """
-        # 这里是设置语言的占位代码
+        # 如果当前是文件模式，切换回系统音频模式
+        if self.is_file_mode:
+            self.is_file_mode = False
+            if hasattr(self.control_panel, 'set_transcription_mode'):
+                self.control_panel.set_transcription_mode("system")
+
+            # 更新菜单选中状态
+            self.menu_bar.transcription_menu.system_audio_action.setChecked(True)
+            self.menu_bar.transcription_menu.actions['select_file'].setChecked(False)
+
+        # 设置语言
         print(f"设置识别语言: {language}")
         self.signals.status_updated.emit(f"已设置识别语言: {language}")
+
+        # 在字幕窗口显示语言设置信息
+        language_info = f"已设置识别语言: {language}"
+
+        # 只有在没有进行转录时才更新字幕窗口
+        if not self.control_panel.is_transcribing:
+            self.subtitle_widget.transcript_text = []
+            info_text = f"{language_info}\n准备就绪，点击'开始转录'按钮开始捕获系统音频"
+            self.subtitle_widget.subtitle_label.setText(info_text)
+            # 滚动到顶部
+            QTimer.singleShot(100, lambda: self.subtitle_widget.verticalScrollBar().setValue(0))
 
     def set_asr_model(self, model_name):
         """
@@ -240,27 +445,6 @@ class MainWindow(QMainWindow):
             self.signals.status_updated.emit(f"已加载ASR模型: {model_name}")
         else:
             self.signals.error_occurred.emit(f"加载ASR模型 {model_name} 失败")
-
-    def _prepare_file_transcription(self, file_path, duration, file_size_mb):
-        """
-        准备文件转录
-
-        Args:
-            file_path: 文件路径
-            duration: 文件时长(秒)
-            file_size_mb: 文件大小(MB)
-        """
-        # 根据文件大小选择转录方法
-        large_file_threshold = 20  # MB
-
-        if file_size_mb > large_file_threshold:
-            self.signals.status_updated.emit(
-                f"检测到大型文件: {file_size_mb:.2f}MB，准备使用增强模式处理"
-            )
-        else:
-            self.signals.status_updated.emit(
-                f"检测到普通文件: {file_size_mb:.2f}MB，准备使用标准模式处理"
-            )
 
     def set_rtm_model(self, model_name):
         """
@@ -395,8 +579,11 @@ class MainWindow(QMainWindow):
             # 保存窗口状态
             self.save_window_state()
 
-            # 停止音频捕获
-            self.audio_processor.stop_capture()
+            # 停止所有转录活动
+            if self.is_file_mode and HAS_FILE_TRANSCRIBER and self.file_transcriber:
+                self.file_transcriber.stop_transcription()
+            else:
+                self.audio_processor.stop_capture()
 
             # 释放COM
             com_handler.uninitialize_com()
@@ -454,9 +641,22 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            # 设置文件路径和转录模式
             self.file_path = file_path
+            self.is_file_mode = True
+
+            # 更新菜单选中状态
+            self.menu_bar.transcription_menu.system_audio_action.setChecked(False)
+            self.menu_bar.transcription_menu.actions['select_file'].setChecked(True)
+
+            # 更新状态
             self.signals.status_updated.emit(f"已选择文件: {os.path.basename(file_path)}")
-            self.subtitle_widget.update_text(f"已选择文件: {os.path.basename(file_path)}")
+
+            # 不立即更新UI，等待获取文件信息后再更新
+
+            # 更新控制面板状态（如果方法存在）
+            if hasattr(self.control_panel, 'set_transcription_mode'):
+                self.control_panel.set_transcription_mode("file", os.path.basename(file_path))
 
             # 检查文件是否存在
             if not os.path.exists(file_path):
@@ -480,12 +680,33 @@ class MainWindow(QMainWindow):
                 probe_data = json.loads(probe.stdout)
                 duration = float(probe_data['format']['duration'])
 
+                # 更新状态
                 self.signals.status_updated.emit(
                     f"文件信息: {os.path.basename(file_path)} ({file_size_mb:.2f}MB, {duration:.2f}秒)"
                 )
 
-                # 准备转录
-                self._prepare_file_transcription(file_path, duration, file_size_mb)
+                # 显示文件信息
+                minutes = int(duration // 60)
+                seconds = int(duration % 60)
+
+                # 不需要获取当前字幕文本，直接设置新内容
+
+                # 准备文件信息文本
+                file_info = (
+                    f"已选择文件: {os.path.basename(file_path)}\n"
+                    f"文件大小: {file_size_mb:.2f}MB\n"
+                    f"时长: {minutes}分{seconds}秒\n"
+                    f"点击'开始转录'按钮开始处理"
+                )
+
+                # 清空之前的转录内容，确保文件信息显示在最上方
+                self.subtitle_widget.transcript_text = []
+
+                # 直接设置文件信息为唯一内容
+                self.subtitle_widget.subtitle_label.setText(file_info)
+
+                # 滚动到顶部
+                QTimer.singleShot(100, lambda: self.subtitle_widget.verticalScrollBar().setValue(0))
 
             except Exception as e:
                 logging.error(f"获取文件信息错误: {e}")

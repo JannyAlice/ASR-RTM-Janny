@@ -2,8 +2,6 @@
 字幕控件模块
 负责字幕的显示和样式管理
 """
-import os
-import time
 import difflib
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QWidget, QGraphicsOpacityEffect,
                              QScrollArea, QSizePolicy)
@@ -104,9 +102,11 @@ class SubtitleWidget(QScrollArea):
         """
         super().__init__(parent)
 
-        # 初始化转录文本列表和输出文件路径
-        self.transcript_text = []
-        self.output_file = None
+        # 初始化转录文本列表和输出文件路径（如果尚未初始化）
+        if not hasattr(self, 'transcript_text'):
+            self.transcript_text = []
+        if not hasattr(self, 'output_file'):
+            self.output_file = None
 
         # 设置滚动区域属性
         self.setWidgetResizable(True)
@@ -199,7 +199,7 @@ class SubtitleWidget(QScrollArea):
                 partial_text = self._format_text(partial_text) if partial_text else partial_text
 
                 # 显示最近的完整结果加上当前的部分结果
-                display_text = self.transcript_text[-9:] if self.transcript_text else []
+                display_text = self.transcript_text[-100:] if self.transcript_text else []
                 display_text.append(partial_text)
 
                 # 更新字幕标签
@@ -216,8 +216,8 @@ class SubtitleWidget(QScrollArea):
                     # 添加新的完整结果到转录文本列表
                     self.transcript_text.append(text)
 
-                # 只显示最近的几条完整结果
-                self.subtitle_label.setText('\n'.join(self.transcript_text[-10:]))
+                # 显示所有完整结果，但限制最大数量以避免性能问题
+                self.subtitle_label.setText('\n'.join(self.transcript_text[-500:]))
 
             # 滚动到底部
             QTimer.singleShot(100, self._scroll_to_bottom)
@@ -254,58 +254,15 @@ class SubtitleWidget(QScrollArea):
             self.subtitle_label.set_opacity(0.5)
 
     def save_transcript(self):
-        """保存转录文本到文件"""
-        try:
-            if not hasattr(self, 'transcript_text') or not self.transcript_text:
-                print("没有可保存的转录内容")
-                return
+        """
+        保存转录文本到文件
 
-            # 如果已经有保存的文件，并且内容没有变化，则不再保存
-            if hasattr(self, 'output_file') and self.output_file and os.path.exists(self.output_file):
-                try:
-                    with open(self.output_file, 'r', encoding='utf-8') as f:
-                        saved_content = f.read()
-                        current_content = '\n'.join(self.transcript_text)
-                        if saved_content == current_content:
-                            print("内容未变化，不再重复保存")
-                            return
-                except Exception as e:
-                    print(f"检查文件内容错误: {e}")
-
-            # 确保 transcripts 目录存在
-            save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "transcripts")
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir)
-
-            # 生成带时间戳的文件名
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f"transcript_{timestamp}.txt"
-
-            # 完整的保存路径
-            save_path = os.path.join(save_dir, filename)
-
-            # 保存文件
-            with open(save_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(self.transcript_text))
-
-            # 保存路径用于后续操作
-            self.output_file = save_path
-
-            # 在字幕区域显示保存信息
-            current_text = self.subtitle_label.text()
-            self.subtitle_label.setText(f"{current_text}\n\n转录已保存到: {save_path}")
-            QTimer.singleShot(100, self._scroll_to_bottom)
-
-            # 打印保存信息
-            print(f"转录文本已保存到: {save_path}")
-
-            return save_path
-
-        except Exception as e:
-            print(f"保存转录文本错误: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        注意：此方法已废弃，保留仅为兼容性目的。
+        实际的保存操作已移至 MainWindow 类中处理。
+        """
+        # 返回空值，表示没有保存任何文件
+        # 这样可以防止在 MainWindow 中重复保存文件
+        return None
 
     def _is_similar(self, text1, text2):
         """检查两段文本是否相似（相似度阈值60%）

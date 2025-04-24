@@ -109,6 +109,9 @@ class AudioProcessor:
         # 设置捕获标志
         self.is_capturing = True
 
+        # 初始化进度条为在线转录模式
+        self.signals.progress_updated.emit(50, "转录时长: 00:00")
+
         # 创建捕获线程
         self.capture_thread = threading.Thread(
             target=self._capture_audio_thread,
@@ -140,6 +143,14 @@ class AudioProcessor:
 
         self.capture_thread = None
 
+        # 重置进度条，但不立即更新，给字幕窗口留出时间显示保存信息
+        # 使用延迟重置进度条
+        def reset_progress_bar():
+            self.signals.progress_updated.emit(0, "%p% - %v/%m")
+
+        # 使用线程安全的方式延迟重置进度条
+        threading.Timer(1.0, reset_progress_bar).start()
+
         return True
 
     def _capture_audio_thread(self, recognizer: Any) -> None:
@@ -150,6 +161,7 @@ class AudioProcessor:
             recognizer: 识别器实例
         """
         start_time = time.time()
+        last_progress_update = time.time()
 
         try:
             # 获取音频设备
@@ -159,6 +171,16 @@ class AudioProcessor:
 
                 # 循环捕获音频
                 while self.is_capturing:
+                    # 更新进度条显示转录时长
+                    current_time = time.time()
+                    if current_time - last_progress_update >= 0.5:  # 每0.5秒更新一次
+                        elapsed_seconds = current_time - start_time
+                        minutes = int(elapsed_seconds // 60)
+                        seconds = int(elapsed_seconds % 60)
+                        time_str = f"转录时长: {minutes:02d}:{seconds:02d}"
+                        self.signals.progress_updated.emit(50, time_str)  # 使用固定的50%进度
+                        last_progress_update = current_time
+
                     # 捕获音频数据
                     data = mic.record(numframes=self.buffer_size)
 
@@ -188,7 +210,7 @@ class AudioProcessor:
                                 self.signals.new_text.emit(text)
                         else:
                             partial_result = recognizer.PartialResult()
-                            
+
                             # 统一处理所有可能的返回格式
                             if isinstance(partial_result, str):
                                 partial = json.loads(partial_result)
@@ -198,7 +220,7 @@ class AudioProcessor:
                                 partial = {'partial': str(partial_result.partial)}
                             else:
                                 partial = {'partial': str(partial_result)}
-                            
+
                             # 确保partial字段存在且有效
                             partial_text = partial.get('partial', '').strip()
                             if partial_text:

@@ -48,6 +48,15 @@ class MainMenu(QMenuBar):
                 background: rgba(100, 100, 100, 255);
                 border-radius: 4px;
             }
+            /* 添加菜单项选中样式 */
+            QMenu::item:checked {
+                background-color: rgba(74, 144, 226, 180);
+            }
+            QMenu::indicator:checked {
+                image: url(:/images/check.png);
+                position: absolute;
+                left: 7px;
+            }
         """)
 
         # 创建子菜单

@@ -29,7 +29,9 @@ class TranscriptionMenu(QMenu):
 
         # 系统音频子菜单
         self.system_audio_menu = QMenu("系统音频模式", self.parent())
-        self.addMenu(self.system_audio_menu)
+        self.system_audio_action = self.addMenu(self.system_audio_menu)
+        self.system_audio_action.setCheckable(True)
+        self.system_audio_action.setChecked(True)  # 默认选中系统音频模式
 
         # 创建语言选择动作组
         self.lang_group = QActionGroup(self.parent())
@@ -53,7 +55,7 @@ class TranscriptionMenu(QMenu):
         self.addSeparator()
 
         # 文件选择动作
-        self.actions['select_file'] = QAction("选择音频/视频文件", self.parent())
+        self.actions['select_file'] = QAction("选择音频/视频文件", self.parent(), checkable=True)
         self.actions['select_file'].setShortcut("Ctrl+O")
         self.addAction(self.actions['select_file'])
 
