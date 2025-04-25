@@ -143,8 +143,27 @@ class MainWindow(QMainWindow):
         transcription_config = self.config.get_config('transcription', {})
         default_model = transcription_config.get('default_model', 'vosk')
 
+        # 更新菜单选中状态
+        for key, action in self.menu_bar.model_menu.actions.items():
+            if key in ['vosk', 'sherpa_int8', 'sherpa_std']:
+                action.setChecked(key == default_model)
+
         # 加载模型
-        if not self.model_manager.load_model(default_model):
+        if self.model_manager.load_model(default_model):
+            # 获取模型显示名称
+            model_display_name = self._get_model_display_name(default_model)
+
+            # 更新状态栏
+            self.signals.status_updated.emit(f"已加载ASR模型: {model_display_name}")
+
+            # 在字幕窗口显示初始信息
+            model_info = f"已加载ASR模型: {model_display_name}"
+            info_text = f"{model_info}\n准备就绪，点击'开始转录'按钮开始捕获系统音频"
+
+            # 设置字幕窗口文本
+            self.subtitle_widget.transcript_text = []
+            self.subtitle_widget.subtitle_label.setText(info_text)
+        else:
             self.signals.error_occurred.emit(f"加载默认模型 {default_model} 失败")
 
     def _load_audio_devices(self):
@@ -178,12 +197,23 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def _on_start_clicked(self):
         """开始按钮点击处理"""
-        # 创建识别器
-        recognizer = self.model_manager.create_recognizer()
-        if not recognizer:
-            self.signals.error_occurred.emit("创建识别器失败")
-            self.control_panel.reset()
-            return
+        # 导入 Sherpa-ONNX 日志工具
+        try:
+            from src.utils.sherpa_logger import sherpa_logger
+        except ImportError:
+            # 如果导入失败，创建一个简单的日志记录器
+            class DummyLogger:
+                def debug(self, msg): print(f"DEBUG: {msg}")
+                def info(self, msg): print(f"INFO: {msg}")
+                def warning(self, msg): print(f"WARNING: {msg}")
+                def error(self, msg): print(f"ERROR: {msg}")
+            sherpa_logger = DummyLogger()
+
+        sherpa_logger.info("开始按钮被点击")
+
+        # 获取当前模型类型
+        model_type = self.model_manager.model_type
+        sherpa_logger.info(f"当前模型类型: {model_type}")
 
         # 清空字幕窗口的内容
         if hasattr(self.subtitle_widget, 'transcript_text'):
@@ -197,37 +227,122 @@ class MainWindow(QMainWindow):
         # 根据当前模式执行不同的转录功能
         if self.is_file_mode and HAS_FILE_TRANSCRIBER and self.file_transcriber:
             # 文件转录模式
+            sherpa_logger.info("文件转录模式")
+
             if not self.file_path:
-                self.signals.error_occurred.emit("请先选择要转录的文件")
+                error_msg = "请先选择要转录的文件"
+                sherpa_logger.error(error_msg)
+                self.signals.error_occurred.emit(error_msg)
                 self.control_panel.reset()
                 return
 
-            # 开始文件转录
-            if not self.file_transcriber.start_transcription(self.file_path, recognizer):
-                self.signals.error_occurred.emit("开始文件转录失败")
+            sherpa_logger.info(f"文件路径: {self.file_path}")
+
+            # 检查文件是否存在
+            if not os.path.exists(self.file_path):
+                error_msg = f"文件不存在: {self.file_path}"
+                sherpa_logger.error(error_msg)
+                self.signals.error_occurred.emit(error_msg)
                 self.control_panel.reset()
                 return
 
-            # 更新状态
-            self.signals.status_updated.emit(f"正在转录文件: {os.path.basename(self.file_path)}...")
+            # 检查当前引擎是否支持文件转录
+            current_engine_type = self.model_manager.get_current_engine_type()
+            sherpa_logger.info(f"当前引擎类型: {current_engine_type}")
+
+            if current_engine_type and current_engine_type.startswith("sherpa"):
+                # 使用 Sherpa-ONNX 模型直接转录文件
+                sherpa_logger.info("使用 Sherpa-ONNX 模型直接转录文件")
+
+                # 使用 model_manager 实例作为 recognizer
+                recognizer = self.model_manager
+                sherpa_logger.info(f"使用 model_manager 实例作为 recognizer: {type(recognizer)}")
+
+                # 开始文件转录
+                sherpa_logger.info(f"开始文件转录: {self.file_path}")
+                if not self.file_transcriber.start_transcription(self.file_path, recognizer):
+                    error_msg = "开始文件转录失败"
+                    sherpa_logger.error(error_msg)
+                    self.signals.error_occurred.emit(error_msg)
+                    self.control_panel.reset()
+                    return
+
+                # 更新状态
+                status_msg = f"正在使用 Sherpa-ONNX 转录文件: {os.path.basename(self.file_path)}..."
+                sherpa_logger.info(status_msg)
+                self.signals.status_updated.emit(status_msg)
+            else:
+                # 使用 Vosk 模型转录文件
+                sherpa_logger.info("使用 Vosk 模型转录文件")
+
+                # 创建识别器
+                sherpa_logger.info("创建 Vosk 识别器")
+                recognizer = self.model_manager.create_recognizer()
+                if not recognizer:
+                    error_msg = "创建识别器失败"
+                    sherpa_logger.error(error_msg)
+                    self.signals.error_occurred.emit(error_msg)
+                    self.control_panel.reset()
+                    return
+
+                sherpa_logger.info(f"识别器创建成功: {type(recognizer)}")
+
+                # 开始文件转录
+                sherpa_logger.info(f"开始文件转录: {self.file_path}")
+                if not self.file_transcriber.start_transcription(self.file_path, recognizer):
+                    error_msg = "开始文件转录失败"
+                    sherpa_logger.error(error_msg)
+                    self.signals.error_occurred.emit(error_msg)
+                    self.control_panel.reset()
+                    return
+
+                # 更新状态
+                status_msg = f"正在使用 Vosk 转录文件: {os.path.basename(self.file_path)}..."
+                sherpa_logger.info(status_msg)
+                self.signals.status_updated.emit(status_msg)
 
             # 禁用相关菜单项
             self.menu_bar.update_menu_state(is_recording=True)
         else:
             # 系统音频模式（默认模式或文件转录不可用时）
+            sherpa_logger.info("系统音频模式")
+
             if self.is_file_mode:
                 # 如果文件转录不可用，回退到系统音频模式
                 self.is_file_mode = False
-                self.signals.status_updated.emit("文件转录功能不可用，已切换到系统音频模式")
+                status_msg = "文件转录功能不可用，已切换到系统音频模式"
+                sherpa_logger.warning(status_msg)
+                self.signals.status_updated.emit(status_msg)
+
+            # 创建识别器
+            sherpa_logger.info("创建识别器")
+            recognizer = self.model_manager.create_recognizer()
+            if not recognizer:
+                error_msg = "创建识别器失败"
+                sherpa_logger.error(error_msg)
+                self.signals.error_occurred.emit(error_msg)
+                self.control_panel.reset()
+                return
+
+            sherpa_logger.info(f"识别器创建成功: {type(recognizer)}")
+
+            # 检查识别器的引擎类型
+            engine_type = getattr(recognizer, 'engine_type', None)
+            sherpa_logger.info(f"识别器引擎类型: {engine_type}")
 
             # 开始系统音频捕获
+            sherpa_logger.info("开始系统音频捕获")
             if not self.audio_processor.start_capture(recognizer):
-                self.signals.error_occurred.emit("开始音频捕获失败")
+                error_msg = "开始音频捕获失败"
+                sherpa_logger.error(error_msg)
+                self.signals.error_occurred.emit(error_msg)
                 self.control_panel.reset()
                 return
 
             # 更新状态
-            self.signals.status_updated.emit("正在转录系统音频...")
+            status_msg = "正在转录系统音频..."
+            sherpa_logger.info(status_msg)
+            self.signals.status_updated.emit(status_msg)
 
             # 禁用相关菜单项
             self.menu_bar.update_menu_state(is_recording=True)
@@ -440,11 +555,60 @@ class MainWindow(QMainWindow):
         Args:
             model_name: 模型名称
         """
+        # 获取模型显示名称
+        model_display_name = self._get_model_display_name(model_name)
+
+        # 更新菜单选中状态
+        for key, action in self.menu_bar.model_menu.actions.items():
+            if key in ['vosk', 'sherpa_int8', 'sherpa_std']:
+                action.setChecked(key == model_name)
+
         # 加载模型
         if self.model_manager.load_model(model_name):
-            self.signals.status_updated.emit(f"已加载ASR模型: {model_name}")
+            # 更新状态栏
+            self.signals.status_updated.emit(f"已加载ASR模型: {model_display_name}")
+
+            # 在字幕窗口显示模型设置信息
+            model_info = f"已设置ASR模型: {model_display_name}"
+
+            # 只有在没有进行转录时才更新字幕窗口
+            if not self.control_panel.is_transcribing:
+                # 保留现有文本，如果有的话
+                current_text = self.subtitle_widget.subtitle_label.text()
+
+                # 如果当前文本为空或只包含准备就绪信息，则设置新文本
+                if not current_text or "准备就绪" in current_text:
+                    self.subtitle_widget.transcript_text = []
+                    info_text = f"{model_info}\n准备就绪，点击'开始转录'按钮开始捕获系统音频"
+                    self.subtitle_widget.subtitle_label.setText(info_text)
+                else:
+                    # 否则，将模型信息添加到当前文本的最下方
+                    self.subtitle_widget.subtitle_label.setText(current_text + "\n\n" + model_info)
+
+                # 滚动到底部，确保最新信息可见
+                QTimer.singleShot(100, self.subtitle_widget._scroll_to_bottom)
         else:
-            self.signals.error_occurred.emit(f"加载ASR模型 {model_name} 失败")
+            self.signals.error_occurred.emit(f"加载ASR模型 {model_display_name} 失败")
+
+    def _get_model_display_name(self, model_name):
+        """
+        获取模型的显示名称
+
+        Args:
+            model_name: 模型名称
+
+        Returns:
+            str: 模型显示名称
+        """
+        model_display_names = {
+            'vosk': 'VOSK Small 模型',
+            'sherpa_int8': 'Sherpa-ONNX int8量化模型',
+            'sherpa_std': 'Sherpa-ONNX 标准模型',
+            'argos': 'Argostranslate 模型',
+            'opus': 'Opus-Mt-ONNX 模型'
+        }
+
+        return model_display_names.get(model_name, model_name)
 
     def set_rtm_model(self, model_name):
         """
@@ -453,9 +617,37 @@ class MainWindow(QMainWindow):
         Args:
             model_name: 模型名称
         """
+        # 获取模型显示名称
+        model_display_name = self._get_model_display_name(model_name)
+
+        # 更新菜单选中状态
+        for key, action in self.menu_bar.model_menu.actions.items():
+            if key in ['argos', 'opus']:
+                action.setChecked(key == model_name)
+
         # 这里是设置RTM模型的占位代码
         print(f"设置RTM模型: {model_name}")
-        self.signals.status_updated.emit(f"已设置RTM模型: {model_name}")
+        self.signals.status_updated.emit(f"已设置RTM模型: {model_display_name}")
+
+        # 在字幕窗口显示模型设置信息
+        model_info = f"已设置RTM模型: {model_display_name}"
+
+        # 只有在没有进行转录时才更新字幕窗口
+        if not self.control_panel.is_transcribing:
+            # 保留现有文本，如果有的话
+            current_text = self.subtitle_widget.subtitle_label.text()
+
+            # 如果当前文本为空或只包含准备就绪信息，则设置新文本
+            if not current_text or "准备就绪" in current_text:
+                self.subtitle_widget.transcript_text = []
+                info_text = f"{model_info}\n准备就绪，点击'开始转录'按钮开始捕获系统音频"
+                self.subtitle_widget.subtitle_label.setText(info_text)
+            else:
+                # 否则，将模型信息添加到当前文本的最下方
+                self.subtitle_widget.subtitle_label.setText(current_text + "\n\n" + model_info)
+
+            # 滚动到底部，确保最新信息可见
+            QTimer.singleShot(100, self.subtitle_widget._scroll_to_bottom)
 
     def set_background_mode(self, mode):
         """

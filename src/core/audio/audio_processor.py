@@ -188,51 +188,140 @@ class AudioProcessor:
                     if data.shape[1] > 1:
                         data = np.mean(data, axis=1)
 
-                    # 转换为16位整数
-                    data = (data * 32768).astype(np.int16).tobytes()
-
                     # 处理音频数据
                     try:
-                        if recognizer.AcceptWaveform(data):
-                            result = recognizer.Result()
-                            # 兼容字符串和字典两种格式
-                            if isinstance(result, str):
-                                result_json = json.loads(result)
-                            else:
-                                result_json = result
+                        # 检查数据是否有效
+                        if np.max(np.abs(data)) < 0.01:
+                            print("DEBUG: 音频数据几乎是静音，跳过")
+                            continue
 
-                            if 'text' in result_json and result_json['text'].strip():
-                                # 添加标点符号和首字母大写
-                                text = result_json['text'].strip()
-                                text = text[0].upper() + text[1:]
+                        # 导入 Sherpa-ONNX 日志工具
+                        try:
+                            from src.utils.sherpa_logger import sherpa_logger
+                        except ImportError:
+                            # 如果导入失败，创建一个简单的日志记录器
+                            class DummyLogger:
+                                def debug(self, msg): print(f"DEBUG: {msg}")
+                                def info(self, msg): print(f"INFO: {msg}")
+                                def warning(self, msg): print(f"WARNING: {msg}")
+                                def error(self, msg): print(f"ERROR: {msg}")
+                            sherpa_logger = DummyLogger()
+
+                        # 检查当前引擎类型
+                        engine_type = getattr(recognizer, 'engine_type', None)
+                        if engine_type and engine_type.startswith('sherpa'):
+                            # 对于 Sherpa-ONNX 模型，直接传递 numpy 数组
+                            sherpa_logger.debug(f"使用 Sherpa-ONNX 模型，直接传递 numpy 数组")
+                            sherpa_logger.debug(f"音频数据类型: {type(data)}, 形状: {data.shape}, 最大值: {np.max(np.abs(data))}")
+                            accept_result = recognizer.AcceptWaveform(data)
+                        else:
+                            # 对于 Vosk 模型，转换为 16 位整数字节
+                            data_bytes = (data * 32767).astype(np.int16).tobytes()
+                            print(f"DEBUG: 处理音频数据，类型: {type(data_bytes)}, 长度: {len(data_bytes)}")
+                            accept_result = recognizer.AcceptWaveform(data_bytes)
+                        sherpa_logger.debug(f"AcceptWaveform 结果: {accept_result}")
+
+                        if accept_result:
+                            # 获取完整结果
+                            result = recognizer.Result()
+                            print(f"DEBUG: 完整结果: {result}, 类型: {type(result)}")
+
+                            # 直接使用结果文本（针对 Sherpa-ONNX 模型）
+                            if isinstance(result, str) and not result.startswith('{'):
+                                # 如果是纯文本字符串（不是 JSON），直接使用
+                                text = result.strip()
+                                print(f"DEBUG: 直接使用文本结果: {text}")
+                            else:
+                                # 尝试解析 JSON 或其他格式
+                                try:
+                                    if isinstance(result, str):
+                                        result_json = json.loads(result)
+                                    elif hasattr(result, 'text'):
+                                        result_json = {"text": result.text}
+                                    elif hasattr(result, '__str__'):
+                                        result_json = {"text": str(result)}
+                                    else:
+                                        result_json = {"text": "无法解析的结果"}
+
+                                    print(f"DEBUG: 解析后的结果: {result_json}")
+
+                                    # 提取文本
+                                    if 'text' in result_json and result_json['text'].strip():
+                                        text = result_json['text'].strip()
+                                    else:
+                                        print(f"DEBUG: 结果中没有文本或文本为空")
+                                        continue
+                                except Exception as e:
+                                    print(f"DEBUG: 解析结果错误: {e}")
+                                    # 如果解析失败，尝试直接使用结果
+                                    text = str(result).strip()
+                                    if not text:
+                                        continue
+
+                            # 格式化文本
+                            if text:
+                                if len(text) > 0:
+                                    text = text[0].upper() + text[1:]
                                 if text[-1] not in ['.', '?', '!']:
                                     text += '.'
+                                print(f"DEBUG: 发送文本: {text}")
                                 self.signals.new_text.emit(text)
-                        else:
-                            partial_result = recognizer.PartialResult()
-
-                            # 统一处理所有可能的返回格式
-                            if isinstance(partial_result, str):
-                                partial = json.loads(partial_result)
-                            elif isinstance(partial_result, dict):
-                                partial = partial_result
-                            elif hasattr(partial_result, 'partial'):
-                                partial = {'partial': str(partial_result.partial)}
                             else:
-                                partial = {'partial': str(partial_result)}
+                                print(f"DEBUG: 文本为空，不发送")
+                        else:
+                            # 获取部分结果
+                            partial_result = recognizer.PartialResult()
+                            print(f"DEBUG: 部分结果: {partial_result}, 类型: {type(partial_result)}")
 
-                            # 确保partial字段存在且有效
-                            partial_text = partial.get('partial', '').strip()
-                            if partial_text:
-                                self.signals.new_text.emit("PARTIAL:" + partial_text)
+                            # 直接使用结果文本（针对 Sherpa-ONNX 模型）
+                            if isinstance(partial_result, str) and not partial_result.startswith('{'):
+                                # 如果是纯文本字符串（不是 JSON），直接使用
+                                partial_text = partial_result.strip()
+                                print(f"DEBUG: 直接使用部分文本结果: {partial_text}")
+                                if partial_text:
+                                    print(f"DEBUG: 发送部分文本: {partial_text}")
+                                    self.signals.new_text.emit("PARTIAL:" + partial_text)
+                                else:
+                                    print(f"DEBUG: 部分文本为空，不发送")
+                            else:
+                                # 尝试解析 JSON 或其他格式
+                                try:
+                                    if isinstance(partial_result, str):
+                                        try:
+                                            partial = json.loads(partial_result)
+                                        except json.JSONDecodeError:
+                                            # 如果不是有效的 JSON，直接使用文本
+                                            partial = {"partial": partial_result}
+                                    elif isinstance(partial_result, dict):
+                                        partial = partial_result
+                                    elif hasattr(partial_result, 'partial'):
+                                        partial = {'partial': str(partial_result.partial)}
+                                    else:
+                                        partial = {'partial': str(partial_result)}
+
+                                    print(f"DEBUG: 解析后的部分结果: {partial}")
+
+                                    # 确保partial字段存在且有效
+                                    partial_text = partial.get('partial', '').strip()
+                                    if partial_text:
+                                        print(f"DEBUG: 发送部分文本: {partial_text}")
+                                        self.signals.new_text.emit("PARTIAL:" + partial_text)
+                                    else:
+                                        print(f"DEBUG: 部分结果中没有文本或文本为空")
+                                except Exception as e:
+                                    print(f"DEBUG: 解析部分结果错误: {e}")
+                                    # 如果解析失败，尝试直接使用结果
+                                    partial_text = str(partial_result).strip()
+                                    if partial_text:
+                                        print(f"DEBUG: 发送部分文本: {partial_text}")
+                                        self.signals.new_text.emit("PARTIAL:" + partial_text)
+                                    else:
+                                        print(f"DEBUG: 部分文本为空，不发送")
                     except Exception as e:
                         self.signals.error_occurred.emit(f"音频处理错误: {str(e)}")
+                        print(f"DEBUG: 音频处理错误: {e}")
                         import traceback
                         traceback.print_exc()
-                        partial_json = json.loads(partial)
-
-                        if 'partial' in partial_json and partial_json['partial'].strip():
-                            self.signals.new_text.emit(f"[部分] {partial_json['partial']}")
 
         except Exception as e:
             self.signals.error_occurred.emit(f"音频捕获错误: {e}")

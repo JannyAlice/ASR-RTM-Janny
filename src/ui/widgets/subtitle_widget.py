@@ -203,6 +203,7 @@ class SubtitleWidget(QScrollArea):
                 display_text.append(partial_text)
 
                 # 更新字幕标签
+                print(f"DEBUG: 更新部分结果: {partial_text}")
                 self.subtitle_label.setText('\n'.join(display_text))
             else:
                 # 完整句子 - 格式化文本
@@ -214,6 +215,7 @@ class SubtitleWidget(QScrollArea):
                     print(f"跳过重复文本: {text}")
                 else:
                     # 添加新的完整结果到转录文本列表
+                    print(f"添加新文本: {text}")
                     self.transcript_text.append(text)
 
                 # 显示所有完整结果，但限制最大数量以避免性能问题
