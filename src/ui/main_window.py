@@ -211,9 +211,14 @@ class MainWindow(QMainWindow):
 
         sherpa_logger.info("开始按钮被点击")
 
-        # 获取当前模型类型
+        # 获取当前模型和引擎信息
         model_type = self.model_manager.model_type
+        engine_type = self.model_manager.get_current_engine_type()
+        engine_info = type(self.model_manager.current_engine).__name__ if self.model_manager.current_engine else "None"
+
         sherpa_logger.info(f"当前模型类型: {model_type}")
+        sherpa_logger.info(f"当前引擎类型: {engine_type}")
+        sherpa_logger.info(f"当前引擎: {engine_info}")
 
         # 清空字幕窗口的内容
         if hasattr(self.subtitle_widget, 'transcript_text'):
@@ -246,32 +251,16 @@ class MainWindow(QMainWindow):
                 self.control_panel.reset()
                 return
 
+            # 获取模型显示名称
+            model_display_name = self._get_model_display_name(model_type)
+            sherpa_logger.info(f"模型显示名称: {model_display_name}")
+
             # 检查当前引擎是否支持文件转录
             current_engine_type = self.model_manager.get_current_engine_type()
             sherpa_logger.info(f"当前引擎类型: {current_engine_type}")
+            sherpa_logger.info(f"当前引擎: {type(self.model_manager.current_engine).__name__ if self.model_manager.current_engine else 'None'}")
 
-            if current_engine_type and current_engine_type.startswith("sherpa"):
-                # 使用 Sherpa-ONNX 模型直接转录文件
-                sherpa_logger.info("使用 Sherpa-ONNX 模型直接转录文件")
-
-                # 使用 model_manager 实例作为 recognizer
-                recognizer = self.model_manager
-                sherpa_logger.info(f"使用 model_manager 实例作为 recognizer: {type(recognizer)}")
-
-                # 开始文件转录
-                sherpa_logger.info(f"开始文件转录: {self.file_path}")
-                if not self.file_transcriber.start_transcription(self.file_path, recognizer):
-                    error_msg = "开始文件转录失败"
-                    sherpa_logger.error(error_msg)
-                    self.signals.error_occurred.emit(error_msg)
-                    self.control_panel.reset()
-                    return
-
-                # 更新状态
-                status_msg = f"正在使用 Sherpa-ONNX 转录文件: {os.path.basename(self.file_path)}..."
-                sherpa_logger.info(status_msg)
-                self.signals.status_updated.emit(status_msg)
-            else:
+            if current_engine_type == "vosk":
                 # 使用 Vosk 模型转录文件
                 sherpa_logger.info("使用 Vosk 模型转录文件")
 
@@ -286,6 +275,7 @@ class MainWindow(QMainWindow):
                     return
 
                 sherpa_logger.info(f"识别器创建成功: {type(recognizer)}")
+                sherpa_logger.info(f"识别器引擎类型: {getattr(recognizer, 'engine_type', 'unknown')}")
 
                 # 开始文件转录
                 sherpa_logger.info(f"开始文件转录: {self.file_path}")
@@ -297,9 +287,48 @@ class MainWindow(QMainWindow):
                     return
 
                 # 更新状态
-                status_msg = f"正在使用 Vosk 转录文件: {os.path.basename(self.file_path)}..."
+                status_msg = f"正在使用 {model_display_name} 转录文件: {os.path.basename(self.file_path)}..."
                 sherpa_logger.info(status_msg)
                 self.signals.status_updated.emit(status_msg)
+
+                # 更新字幕窗口
+                subtitle_msg = f"正在使用 {model_display_name} 转录文件...\n引擎类型: {current_engine_type}"
+                self.subtitle_widget.subtitle_label.setText(subtitle_msg)
+
+            elif current_engine_type and current_engine_type.startswith("sherpa"):
+                # 使用 Sherpa-ONNX 模型直接转录文件
+                sherpa_logger.info(f"使用 Sherpa-ONNX 模型转录文件 (类型: {current_engine_type})")
+
+                # 使用 model_manager 实例作为 recognizer
+                recognizer = self.model_manager
+                sherpa_logger.info(f"使用 model_manager 实例作为 recognizer: {type(recognizer)}")
+                sherpa_logger.info(f"recognizer.current_engine: {type(recognizer.current_engine).__name__ if recognizer.current_engine else 'None'}")
+
+                # 开始文件转录
+                sherpa_logger.info(f"开始文件转录: {self.file_path}")
+                if not self.file_transcriber.start_transcription(self.file_path, recognizer):
+                    error_msg = "开始文件转录失败"
+                    sherpa_logger.error(error_msg)
+                    self.signals.error_occurred.emit(error_msg)
+                    self.control_panel.reset()
+                    return
+
+                # 更新状态
+                status_msg = f"正在使用 {model_display_name} 转录文件: {os.path.basename(self.file_path)}..."
+                sherpa_logger.info(status_msg)
+                self.signals.status_updated.emit(status_msg)
+
+                # 更新字幕窗口
+                subtitle_msg = f"正在使用 {model_display_name} 转录文件...\n引擎类型: {current_engine_type}"
+                self.subtitle_widget.subtitle_label.setText(subtitle_msg)
+
+            else:
+                # 不支持的引擎类型
+                error_msg = f"不支持的引擎类型: {current_engine_type}"
+                sherpa_logger.error(error_msg)
+                self.signals.error_occurred.emit(error_msg)
+                self.control_panel.reset()
+                return
 
             # 禁用相关菜单项
             self.menu_bar.update_menu_state(is_recording=True)
@@ -314,6 +343,10 @@ class MainWindow(QMainWindow):
                 sherpa_logger.warning(status_msg)
                 self.signals.status_updated.emit(status_msg)
 
+            # 获取模型显示名称
+            model_display_name = self._get_model_display_name(model_type)
+            sherpa_logger.info(f"模型显示名称: {model_display_name}")
+
             # 创建识别器
             sherpa_logger.info("创建识别器")
             recognizer = self.model_manager.create_recognizer()
@@ -327,8 +360,12 @@ class MainWindow(QMainWindow):
             sherpa_logger.info(f"识别器创建成功: {type(recognizer)}")
 
             # 检查识别器的引擎类型
-            engine_type = getattr(recognizer, 'engine_type', None)
-            sherpa_logger.info(f"识别器引擎类型: {engine_type}")
+            recognizer_engine_type = getattr(recognizer, 'engine_type', None)
+            sherpa_logger.info(f"识别器引擎类型: {recognizer_engine_type}")
+
+            # 确认引擎类型与模型类型一致
+            if recognizer_engine_type != model_type:
+                sherpa_logger.warning(f"识别器引擎类型 ({recognizer_engine_type}) 与模型类型 ({model_type}) 不一致")
 
             # 开始系统音频捕获
             sherpa_logger.info("开始系统音频捕获")
@@ -340,9 +377,13 @@ class MainWindow(QMainWindow):
                 return
 
             # 更新状态
-            status_msg = "正在转录系统音频..."
+            status_msg = f"正在使用 {model_display_name} 转录系统音频..."
             sherpa_logger.info(status_msg)
             self.signals.status_updated.emit(status_msg)
+
+            # 更新字幕窗口
+            subtitle_msg = f"正在使用 {model_display_name} 转录系统音频...\n引擎类型: {recognizer_engine_type}"
+            self.subtitle_widget.subtitle_label.setText(subtitle_msg)
 
             # 禁用相关菜单项
             self.menu_bar.update_menu_state(is_recording=True)
@@ -555,8 +596,27 @@ class MainWindow(QMainWindow):
         Args:
             model_name: 模型名称
         """
+        # 导入 Sherpa-ONNX 日志工具
+        try:
+            from src.utils.sherpa_logger import sherpa_logger
+        except ImportError:
+            # 如果导入失败，创建一个简单的日志记录器
+            class DummyLogger:
+                def debug(self, msg): print(f"DEBUG: {msg}")
+                def info(self, msg): print(f"INFO: {msg}")
+                def warning(self, msg): print(f"WARNING: {msg}")
+                def error(self, msg): print(f"ERROR: {msg}")
+            sherpa_logger = DummyLogger()
+
         # 获取模型显示名称
         model_display_name = self._get_model_display_name(model_name)
+        sherpa_logger.info(f"设置ASR模型: {model_name} ({model_display_name})")
+
+        # 记录当前引擎状态
+        current_engine_type = self.model_manager.get_current_engine_type()
+        current_engine = type(self.model_manager.current_engine).__name__ if self.model_manager.current_engine else "None"
+        sherpa_logger.info(f"当前引擎类型: {current_engine_type}")
+        sherpa_logger.info(f"当前引擎: {current_engine}")
 
         # 更新菜单选中状态
         for key, action in self.menu_bar.model_menu.actions.items():
@@ -565,11 +625,19 @@ class MainWindow(QMainWindow):
 
         # 加载模型
         if self.model_manager.load_model(model_name):
+            # 获取更新后的引擎信息
+            new_engine_type = self.model_manager.get_current_engine_type()
+            new_engine = type(self.model_manager.current_engine).__name__ if self.model_manager.current_engine else "None"
+            sherpa_logger.info(f"新引擎类型: {new_engine_type}")
+            sherpa_logger.info(f"新引擎: {new_engine}")
+
             # 更新状态栏
-            self.signals.status_updated.emit(f"已加载ASR模型: {model_display_name}")
+            status_msg = f"已加载ASR模型: {model_display_name} (引擎: {new_engine_type})"
+            sherpa_logger.info(status_msg)
+            self.signals.status_updated.emit(status_msg)
 
             # 在字幕窗口显示模型设置信息
-            model_info = f"已设置ASR模型: {model_display_name}"
+            model_info = f"已设置ASR模型: {model_display_name}\n引擎类型: {new_engine_type}\n引擎实例: {new_engine}"
 
             # 只有在没有进行转录时才更新字幕窗口
             if not self.control_panel.is_transcribing:
@@ -588,7 +656,9 @@ class MainWindow(QMainWindow):
                 # 滚动到底部，确保最新信息可见
                 QTimer.singleShot(100, self.subtitle_widget._scroll_to_bottom)
         else:
-            self.signals.error_occurred.emit(f"加载ASR模型 {model_display_name} 失败")
+            error_msg = f"加载ASR模型 {model_display_name} 失败"
+            sherpa_logger.error(error_msg)
+            self.signals.error_occurred.emit(error_msg)
 
     def _get_model_display_name(self, model_name):
         """
