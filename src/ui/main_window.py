@@ -139,19 +139,39 @@ class MainWindow(QMainWindow):
 
     def _load_default_model(self):
         """加载默认模型"""
+        # 导入 Sherpa-ONNX 日志工具
+        try:
+            from src.utils.sherpa_logger import sherpa_logger
+        except ImportError:
+            # 如果导入失败，创建一个简单的日志记录器
+            class DummyLogger:
+                def debug(self, msg): print(f"DEBUG: {msg}")
+                def info(self, msg): print(f"INFO: {msg}")
+                def warning(self, msg): print(f"WARNING: {msg}")
+                def error(self, msg): print(f"ERROR: {msg}")
+            sherpa_logger = DummyLogger()
+
         # 获取默认模型
         transcription_config = self.config.get_config('transcription', {})
         default_model = transcription_config.get('default_model', 'vosk')
 
         # 更新菜单选中状态
         for key, action in self.menu_bar.model_menu.actions.items():
-            if key in ['vosk', 'sherpa_int8', 'sherpa_std']:
+            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626']:
                 action.setChecked(key == default_model)
 
         # 加载模型
         if self.model_manager.load_model(default_model):
             # 获取模型显示名称
             model_display_name = self._get_model_display_name(default_model)
+
+            # 获取引擎类型
+            engine_type = self.model_manager.get_current_engine_type()
+            sherpa_logger.info(f"默认引擎类型: {engine_type}")
+
+            # 更新字幕窗口的引擎类型
+            self.subtitle_widget.current_engine_type = engine_type
+            sherpa_logger.info(f"更新字幕窗口的引擎类型: {engine_type}")
 
             # 更新状态栏
             self.signals.status_updated.emit(f"已加载ASR模型: {model_display_name}")
@@ -430,9 +450,71 @@ class MainWindow(QMainWindow):
                 # 完整的保存路径
                 save_path = os.path.join(save_dir, filename)
 
-                # 保存文件
+                # 保存文件 - 使用带时间戳的转录历史记录
                 with open(save_path, 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(self.subtitle_widget.transcript_text))
+                    # 获取带时间戳的转录历史记录
+                    timestamped_transcript = self.subtitle_widget.get_timestamped_transcript()
+                    f.write(timestamped_transcript)
+
+                # 同时保存一个包含所有数据的调试文件
+                debug_path = save_path.replace('.txt', '_debug.txt')
+                with open(debug_path, 'w', encoding='utf-8') as f:
+                    # 获取所有转录数据
+                    all_data = self.subtitle_widget.get_all_transcript_data()
+
+                    # 写入带时间戳的转录历史
+                    f.write("=== 带时间戳的转录历史 ===\n")
+                    timestamped_text = []
+                    for text, timestamp in all_data['timestamped_transcript']:
+                        timestamped_text.append(f"[{timestamp}] {text}")
+                    f.write('\n'.join(timestamped_text))
+                    f.write("\n\n")
+
+                    # 写入完整转录历史
+                    f.write("=== 完整转录历史 ===\n")
+                    f.write('\n'.join(all_data['full_transcript']))
+                    f.write("\n\n")
+
+                    # 写入部分结果历史
+                    f.write("=== 部分结果历史 ===\n")
+                    f.write('\n'.join(all_data['partial_results']))
+                    f.write("\n\n")
+
+                    # 写入当前显示内容
+                    f.write("=== 当前显示内容 ===\n")
+                    f.write(all_data['current_display'])
+
+                # 保存SRT格式的字幕文件
+                srt_path = save_path.replace('.txt', '.srt')
+                try:
+                    with open(srt_path, 'w', encoding='utf-8') as f:
+                        # 获取所有转录数据
+                        all_data = self.subtitle_widget.get_all_transcript_data()
+
+                        # 生成SRT格式的字幕
+                        for i, (text, timestamp) in enumerate(all_data['timestamped_transcript'], 1):
+                            # 解析时间戳
+                            h, m, s = timestamp.split(':')
+                            start_time = f"00:{h}:{m},{s}00"
+
+                            # 计算结束时间（假设每段字幕持续5秒）
+                            h_end, m_end, s_end = int(h), int(m), int(s) + 5
+                            if s_end >= 60:
+                                s_end -= 60
+                                m_end += 1
+                            if m_end >= 60:
+                                m_end -= 60
+                                h_end += 1
+                            end_time = f"00:{h_end:02d}:{m_end:02d},{s_end:02d}00"
+
+                            # 写入SRT格式
+                            f.write(f"{i}\n")
+                            f.write(f"{start_time} --> {end_time}\n")
+                            f.write(f"{text}\n\n")
+                except Exception as e:
+                    print(f"保存SRT文件错误: {e}")
+                    import traceback
+                    traceback.print_exc()
 
                 # 设置保存标志
                 MainWindow._has_saved_transcript = True
@@ -516,9 +598,71 @@ class MainWindow(QMainWindow):
                 # 完整的保存路径
                 save_path = os.path.join(save_dir, filename)
 
-                # 保存文件
+                # 保存文件 - 使用带时间戳的转录历史记录
                 with open(save_path, 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(self.subtitle_widget.transcript_text))
+                    # 获取带时间戳的转录历史记录
+                    timestamped_transcript = self.subtitle_widget.get_timestamped_transcript()
+                    f.write(timestamped_transcript)
+
+                # 同时保存一个包含所有数据的调试文件
+                debug_path = save_path.replace('.txt', '_debug.txt')
+                with open(debug_path, 'w', encoding='utf-8') as f:
+                    # 获取所有转录数据
+                    all_data = self.subtitle_widget.get_all_transcript_data()
+
+                    # 写入带时间戳的转录历史
+                    f.write("=== 带时间戳的转录历史 ===\n")
+                    timestamped_text = []
+                    for text, timestamp in all_data['timestamped_transcript']:
+                        timestamped_text.append(f"[{timestamp}] {text}")
+                    f.write('\n'.join(timestamped_text))
+                    f.write("\n\n")
+
+                    # 写入完整转录历史
+                    f.write("=== 完整转录历史 ===\n")
+                    f.write('\n'.join(all_data['full_transcript']))
+                    f.write("\n\n")
+
+                    # 写入部分结果历史
+                    f.write("=== 部分结果历史 ===\n")
+                    f.write('\n'.join(all_data['partial_results']))
+                    f.write("\n\n")
+
+                    # 写入当前显示内容
+                    f.write("=== 当前显示内容 ===\n")
+                    f.write(all_data['current_display'])
+
+                # 保存SRT格式的字幕文件
+                srt_path = save_path.replace('.txt', '.srt')
+                try:
+                    with open(srt_path, 'w', encoding='utf-8') as f:
+                        # 获取所有转录数据
+                        all_data = self.subtitle_widget.get_all_transcript_data()
+
+                        # 生成SRT格式的字幕
+                        for i, (text, timestamp) in enumerate(all_data['timestamped_transcript'], 1):
+                            # 解析时间戳
+                            h, m, s = timestamp.split(':')
+                            start_time = f"00:{h}:{m},{s}00"
+
+                            # 计算结束时间（假设每段字幕持续5秒）
+                            h_end, m_end, s_end = int(h), int(m), int(s) + 5
+                            if s_end >= 60:
+                                s_end -= 60
+                                m_end += 1
+                            if m_end >= 60:
+                                m_end -= 60
+                                h_end += 1
+                            end_time = f"00:{h_end:02d}:{m_end:02d},{s_end:02d}00"
+
+                            # 写入SRT格式
+                            f.write(f"{i}\n")
+                            f.write(f"{start_time} --> {end_time}\n")
+                            f.write(f"{text}\n\n")
+                except Exception as e:
+                    print(f"保存SRT文件错误: {e}")
+                    import traceback
+                    traceback.print_exc()
 
                 # 设置保存标志
                 MainWindow._has_saved_transcript = True
@@ -556,6 +700,154 @@ class MainWindow(QMainWindow):
     def _show_error(self, error_message):
         """显示错误消息"""
         QMessageBox.critical(self, "错误", error_message)
+
+    @pyqtSlot()
+    def save_transcript(self):
+        """保存转录文本"""
+        try:
+            # 导入 Sherpa-ONNX 日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
+            sherpa_logger.info("保存转录文本")
+
+            # 直接获取转录文本
+            if hasattr(self.subtitle_widget, 'transcript_text') and self.subtitle_widget.transcript_text:
+                # 确保 transcripts 目录存在
+                import os
+                import time
+                save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "transcripts")
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+
+                # 生成带时间戳的文件名
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+                # 获取当前模型类型
+                model_type = self.model_manager.model_type if hasattr(self.model_manager, 'model_type') else "unknown"
+
+                # 生成文件名
+                filename = f"transcript_{model_type}_{timestamp}.txt"
+
+                # 完整的保存路径
+                save_path = os.path.join(save_dir, filename)
+
+                # 保存文件 - 使用带时间戳的转录历史记录
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    # 获取带时间戳的转录历史记录
+                    timestamped_transcript = self.subtitle_widget.get_timestamped_transcript()
+                    f.write(timestamped_transcript)
+
+                # 同时保存一个包含所有数据的调试文件
+                debug_path = save_path.replace('.txt', '_debug.txt')
+                with open(debug_path, 'w', encoding='utf-8') as f:
+                    # 获取所有转录数据
+                    all_data = self.subtitle_widget.get_all_transcript_data()
+
+                    # 写入带时间戳的转录历史
+                    f.write("=== 带时间戳的转录历史 ===\n")
+                    timestamped_text = []
+                    for text, timestamp in all_data['timestamped_transcript']:
+                        timestamped_text.append(f"[{timestamp}] {text}")
+                    f.write('\n'.join(timestamped_text))
+                    f.write("\n\n")
+
+                    # 写入完整转录历史
+                    f.write("=== 完整转录历史 ===\n")
+                    f.write('\n'.join(all_data['full_transcript']))
+                    f.write("\n\n")
+
+                    # 写入部分结果历史
+                    f.write("=== 部分结果历史 ===\n")
+                    f.write('\n'.join(all_data['partial_results']))
+                    f.write("\n\n")
+
+                    # 写入当前显示内容
+                    f.write("=== 当前显示内容 ===\n")
+                    f.write(all_data['current_display'])
+
+                    # 写入引擎信息
+                    f.write("\n\n=== 引擎信息 ===\n")
+                    f.write(f"模型类型: {model_type}\n")
+                    f.write(f"引擎类型: {self.model_manager.get_current_engine_type()}\n")
+                    f.write(f"保存时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+                # 保存SRT格式的字幕文件
+                srt_path = save_path.replace('.txt', '.srt')
+                try:
+                    with open(srt_path, 'w', encoding='utf-8') as f:
+                        # 获取所有转录数据
+                        all_data = self.subtitle_widget.get_all_transcript_data()
+
+                        # 生成SRT格式的字幕
+                        for i, (text, timestamp) in enumerate(all_data['timestamped_transcript'], 1):
+                            # 解析时间戳
+                            h, m, s = timestamp.split(':')
+                            start_time = f"00:{h}:{m},{s}00"
+
+                            # 计算结束时间（假设每段字幕持续5秒）
+                            h_end, m_end, s_end = int(h), int(m), int(s) + 5
+                            if s_end >= 60:
+                                s_end -= 60
+                                m_end += 1
+                            if m_end >= 60:
+                                m_end -= 60
+                                h_end += 1
+                            end_time = f"00:{h_end:02d}:{m_end:02d},{s_end:02d}00"
+
+                            # 写入SRT格式
+                            f.write(f"{i}\n")
+                            f.write(f"{start_time} --> {end_time}\n")
+                            f.write(f"{text}\n\n")
+                except Exception as e:
+                    sherpa_logger.error(f"保存SRT文件错误: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+                # 设置保存标志
+                MainWindow._has_saved_transcript = True
+
+                # 更新状态
+                self.signals.status_updated.emit(f"转录已保存到: {save_path}")
+
+                # 使用延迟确保在字幕窗口显示保存信息
+                def update_subtitle_with_save_info():
+                    # 获取当前转录文本
+                    current_text = self.subtitle_widget.subtitle_label.text()
+
+                    # 确保保存信息显示在最下方
+                    if "转录已保存到" not in current_text:
+                        # 添加保存信息
+                        save_info = f"\n\n转录已保存到: {save_path}"
+                        self.subtitle_widget.subtitle_label.setText(current_text + save_info)
+
+                        # 滚动到底部
+                        self.subtitle_widget._scroll_to_bottom()
+
+                # 使用较长的延迟确保信息显示
+                QTimer.singleShot(500, update_subtitle_with_save_info)
+
+                # 返回保存路径
+                return save_path
+            else:
+                # 更新状态
+                self.signals.status_updated.emit("没有内容可保存")
+                return None
+        except Exception as e:
+            print(f"保存转录文本错误: {e}")
+            import traceback
+            traceback.print_exc()
+            # 更新状态
+            self.signals.status_updated.emit("保存转录文本失败")
+            return None
 
     def set_recognition_language(self, language):
         """
@@ -620,7 +912,7 @@ class MainWindow(QMainWindow):
 
         # 更新菜单选中状态
         for key, action in self.menu_bar.model_menu.actions.items():
-            if key in ['vosk', 'sherpa_int8', 'sherpa_std']:
+            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626']:
                 action.setChecked(key == model_name)
 
         # 加载模型
@@ -638,6 +930,10 @@ class MainWindow(QMainWindow):
 
             # 在字幕窗口显示模型设置信息
             model_info = f"已设置ASR模型: {model_display_name}\n引擎类型: {new_engine_type}\n引擎实例: {new_engine}"
+
+            # 更新字幕窗口的引擎类型
+            self.subtitle_widget.current_engine_type = new_engine_type
+            sherpa_logger.info(f"更新字幕窗口的引擎类型: {new_engine_type}")
 
             # 只有在没有进行转录时才更新字幕窗口
             if not self.control_panel.is_transcribing:
@@ -674,6 +970,7 @@ class MainWindow(QMainWindow):
             'vosk': 'VOSK Small 模型',
             'sherpa_int8': 'Sherpa-ONNX int8量化模型',
             'sherpa_std': 'Sherpa-ONNX 标准模型',
+            'sherpa_0626': 'Sherpa-ONNX 2023-06-26模型',
             'argos': 'Argostranslate 模型',
             'opus': 'Opus-Mt-ONNX 模型'
         }

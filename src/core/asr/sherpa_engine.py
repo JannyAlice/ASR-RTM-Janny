@@ -1,5 +1,4 @@
 import os
-import json
 import numpy as np
 from typing import Optional, Union, Dict, Any
 import sherpa_onnx
@@ -51,9 +50,92 @@ class SherpaOnnxASR:
             sherpa_logger.info(f"是否使用 int8 量化模型: {self.is_int8}")
 
             # 确定模型文件名
-            encoder_file = "encoder-epoch-99-avg-1.int8.onnx" if self.is_int8 else "encoder-epoch-99-avg-1.onnx"
-            decoder_file = "decoder-epoch-99-avg-1.int8.onnx" if self.is_int8 else "decoder-epoch-99-avg-1.onnx"
-            joiner_file = "joiner-epoch-99-avg-1.int8.onnx" if self.is_int8 else "joiner-epoch-99-avg-1.onnx"
+            # 检查是否是0626模型
+            is_0626 = self.model_config and self.model_config.get("name") == "0626" or "2023-06-26" in self.model_dir
+
+            # 首先尝试检测目录中的实际文件
+            encoder_files = []
+            decoder_files = []
+            joiner_files = []
+
+            # 列出目录中的所有文件
+            try:
+                for file in os.listdir(self.model_dir):
+                    if file.startswith("encoder") and file.endswith(".onnx"):
+                        encoder_files.append(file)
+                    elif file.startswith("decoder") and file.endswith(".onnx"):
+                        decoder_files.append(file)
+                    elif file.startswith("joiner") and file.endswith(".onnx"):
+                        joiner_files.append(file)
+
+                sherpa_logger.info(f"找到的encoder文件: {encoder_files}")
+                sherpa_logger.info(f"找到的decoder文件: {decoder_files}")
+                sherpa_logger.info(f"找到的joiner文件: {joiner_files}")
+            except Exception as e:
+                sherpa_logger.error(f"列出目录文件失败: {e}")
+
+            if is_0626:
+                # 使用0626模型的文件名
+                # 优先使用非int8版本
+                if encoder_files:
+                    # 优先选择非int8版本
+                    encoder_file = next((f for f in encoder_files if "chunk-16-left-128.onnx" in f and ".int8." not in f),
+                                       next((f for f in encoder_files if "chunk-16-left-128" in f),
+                                            "encoder-epoch-99-avg-1-chunk-16-left-128.onnx"))
+                else:
+                    encoder_file = "encoder-epoch-99-avg-1-chunk-16-left-128.onnx"
+
+                if decoder_files:
+                    decoder_file = next((f for f in decoder_files if "chunk-16-left-128.onnx" in f and ".int8." not in f),
+                                       next((f for f in decoder_files if "chunk-16-left-128" in f),
+                                            "decoder-epoch-99-avg-1-chunk-16-left-128.onnx"))
+                else:
+                    decoder_file = "decoder-epoch-99-avg-1-chunk-16-left-128.onnx"
+
+                if joiner_files:
+                    joiner_file = next((f for f in joiner_files if "chunk-16-left-128.onnx" in f and ".int8." not in f),
+                                      next((f for f in joiner_files if "chunk-16-left-128" in f),
+                                           "joiner-epoch-99-avg-1-chunk-16-left-128.onnx"))
+                else:
+                    joiner_file = "joiner-epoch-99-avg-1-chunk-16-left-128.onnx"
+
+                sherpa_logger.info(f"使用0626模型文件名: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
+            else:
+                # 使用现有模型的文件名
+                if self.is_int8:
+                    # 优先使用int8版本
+                    if encoder_files:
+                        encoder_file = next((f for f in encoder_files if ".int8." in f), "encoder-epoch-99-avg-1.int8.onnx")
+                    else:
+                        encoder_file = "encoder-epoch-99-avg-1.int8.onnx"
+
+                    if decoder_files:
+                        decoder_file = next((f for f in decoder_files if ".int8." in f), "decoder-epoch-99-avg-1.int8.onnx")
+                    else:
+                        decoder_file = "decoder-epoch-99-avg-1.int8.onnx"
+
+                    if joiner_files:
+                        joiner_file = next((f for f in joiner_files if ".int8." in f), "joiner-epoch-99-avg-1.int8.onnx")
+                    else:
+                        joiner_file = "joiner-epoch-99-avg-1.int8.onnx"
+                else:
+                    # 优先使用非int8版本
+                    if encoder_files:
+                        encoder_file = next((f for f in encoder_files if ".int8." not in f), "encoder-epoch-99-avg-1.onnx")
+                    else:
+                        encoder_file = "encoder-epoch-99-avg-1.onnx"
+
+                    if decoder_files:
+                        decoder_file = next((f for f in decoder_files if ".int8." not in f), "decoder-epoch-99-avg-1.onnx")
+                    else:
+                        decoder_file = "decoder-epoch-99-avg-1.onnx"
+
+                    if joiner_files:
+                        joiner_file = next((f for f in joiner_files if ".int8." not in f), "joiner-epoch-99-avg-1.onnx")
+                    else:
+                        joiner_file = "joiner-epoch-99-avg-1.onnx"
+
+                sherpa_logger.info(f"使用现有模型文件名: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
 
             sherpa_logger.info(f"使用模型文件: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
 
@@ -86,7 +168,12 @@ class SherpaOnnxASR:
                 "sample_rate": self.sample_rate,
                 "feature_dim": 80,
                 "decoding_method": "greedy_search",
-                "debug": False
+                "debug": False,
+                # 添加端点检测参数，参考TMSpeech项目
+                "enable_endpoint": 1,  # 启用端点检测
+                "rule1_min_trailing_silence": 2.4,  # 基本静音阈值(秒)
+                "rule2_min_trailing_silence": 1.2,  # 长句中的静音阈值(秒)
+                "rule3_min_utterance_length": 20    # 长句判定阈值(帧)
             }
 
             sherpa_logger.info(f"识别器配置: {self.config}")
