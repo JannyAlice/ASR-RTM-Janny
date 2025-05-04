@@ -11,9 +11,9 @@ import sherpa_onnx
 
 
 class SherpaOnnxASR:
-    """Sherpa-ONNX ASR 引擎实现"""
+    """Sherpa-ONNX ASR 引擎实现（支持双模式加载）"""
 
-    def __init__(self, model_path: str, model_config: Optional[Dict[str, Any]] = None):
+    def __init__(self, model_id: Optional[str] = None, model_path: Optional[str] = None, model_config: Optional[Dict[str, Any]] = None):
         """
         初始化 Sherpa-ONNX ASR 引擎
 
@@ -21,6 +21,7 @@ class SherpaOnnxASR:
             model_path: 模型路径
             model_config: 模型配置
         """
+        self.model_id = model_id
         self.model_path = model_path
         self.model_config = model_config or {}
         self.recognizer = None
@@ -37,7 +38,11 @@ class SherpaOnnxASR:
             "sample_rate": 16000,
             "feature_dim": 80,
             "decoding_method": "greedy_search",
-            "debug": False
+            "debug": False,
+            "enable_endpoint": 1,
+            "rule1_min_trailing_silence": 2.4,
+            "rule2_min_trailing_silence": 1.2,
+            "rule3_utterance_length": 20
         }
 
     def setup(self) -> bool:
@@ -66,7 +71,11 @@ class SherpaOnnxASR:
                     num_threads=self.config["num_threads"],
                     sample_rate=self.config["sample_rate"],
                     feature_dim=self.config["feature_dim"],
-                    decoding_method=self.config["decoding_method"]
+                    decoding_method=self.config["decoding_method"],
+                    enable_endpoint_detection=self.config["enable_endpoint"],
+                    rule1_min_trailing_silence=self.config["rule1_min_trailing_silence"],
+                    rule2_min_trailing_silence=self.config["rule2_min_trailing_silence"],
+                    rule3_min_utterance_length=self.config["rule3_utterance_length"]
                 )
             except Exception as e:
                 print(f"使用 from_transducer 创建实例失败: {e}")

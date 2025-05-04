@@ -4,6 +4,7 @@ Sherpa-ONNX 日志工具模块
 """
 import os
 import sys
+import time  # 添加 time 模块导入
 import logging
 import datetime
 from typing import Optional
@@ -11,17 +12,10 @@ from typing import Optional
 class SherpaLogger:
     """Sherpa-ONNX 日志工具类"""
 
-    def __init__(self):
-        """初始化日志工具"""
-        self.logger = None
-        self.console_handler = None
-        self.file_handler = None
-        self.log_file = None
-
-    def setup(self, log_dir: str = "logs", log_level: int = logging.DEBUG) -> None:
+    def __init__(self, log_dir: str = "logs", log_level: int = logging.DEBUG):
         """
-        设置日志工具
-
+        初始化日志工具
+        
         Args:
             log_dir: 日志目录
             log_level: 日志级别
@@ -29,12 +23,8 @@ class SherpaLogger:
         # 创建日志目录
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
-
-        # 创建日志文件名（带时间戳）
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.log_file = os.path.join(log_dir, f"sherpa_debug_{timestamp}.log")
-
-        # 创建日志记录器
+            
+        # 初始化日志记录器
         self.logger = logging.getLogger("sherpa")
         self.logger.setLevel(log_level)
         self.logger.propagate = False
@@ -45,19 +35,23 @@ class SherpaLogger:
 
         # 创建控制台处理器
         self.console_handler = logging.StreamHandler(sys.stdout)
-        self.console_handler.setLevel(log_level)
+        self.console_handler.setLevel(logging.INFO)  # 控制台始终显示INFO级别
         console_formatter = logging.Formatter("%(message)s")
         self.console_handler.setFormatter(console_formatter)
         self.logger.addHandler(self.console_handler)
-
+        
         # 创建文件处理器
-        self.file_handler = logging.FileHandler(self.log_file, encoding="utf-8")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.log_file = os.path.join(log_dir, f"sherpa_debug_{timestamp}.log")
+        self.file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
         self.file_handler.setLevel(log_level)
-        file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        file_formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
         self.file_handler.setFormatter(file_formatter)
         self.logger.addHandler(self.file_handler)
-
-        # 记录初始日志
+        
+        # 记录初始化信息
         self.logger.info(f"Sherpa-ONNX 日志文件: {self.log_file}")
         self.logger.info(f"日志级别: {logging.getLevelName(log_level)}")
 

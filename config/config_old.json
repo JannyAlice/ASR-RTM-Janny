@@ -1,0 +1,133 @@
+{
+    "app": {
+        "model_path_base": "models",
+        "default_file": "C:\\Users\\crige\\RealtimeTrans\\RealT-whisper\\debug_audio\\mytest.mp4",
+        "window": {
+            "geometry": {
+                "x": 100,
+                "y": 100,
+                "width": 800,
+                "height": 600
+            },
+            "background_mode": "translucent",
+            "font_size": 12
+        },
+        "style": {
+            "background_color": "rgba(30, 30, 30, 255)",
+            "menu_background": "rgba(60, 60, 60, 255)",
+            "menu_text_color": "white",
+            "subtitle_color": "red",
+            "subtitle_background": "rgba(0, 0, 0, 150)",
+            "start_button_color": "rgba(50, 150, 50, 200)",
+            "exit_button_color": "rgba(150, 50, 50, 200)"
+        },
+        "font": {
+            "family": "Arial",
+            "size": 16,
+            "weight": "bold"
+        }
+    },
+    "transcription": {
+        "default_model": "vosk"
+    },
+    "asr": {
+        "models": {
+            "vosk": {
+                "path": "C:\\Users\\crige\\RealtimeTrans\\vosk-api\\models\\asr\\vosk\\vosk-model-small-en-us-0.15",
+                "type": "standard",
+                "enabled": true,
+                "config": {
+                    "sample_rate": 16000,
+                    "use_words": true,
+                    "channels": 1,
+                    "buffer_size": 4000
+                }
+            },
+            "sherpa": {
+                "path": "models/asr/sherpa-onnx",
+                "type": "int8",
+                "enabled": true,
+                "config": {
+                    "encoder": "encoder-epoch-99-avg-1.int8.onnx",
+                    "decoder": "decoder-epoch-99-avg-1.int8.onnx",
+                    "joiner": "joiner-epoch-99-avg-1.int8.onnx",
+                    "tokens": "tokens.txt",
+                    "num_threads": 1,
+                    "sample_rate": 16000,
+                    "feature_dim": 80,
+                    "decoding_method": "greedy_search",
+                    "debug": false
+                }
+            },
+            "sherpa_std": {
+                "path": "models/asr/sherpa-onnx",
+                "type": "standard",
+                "enabled": false,
+                "config": {
+                    "encoder": "encoder-epoch-99-avg-1.onnx",
+                    "decoder": "decoder-epoch-99-avg-1.onnx",
+                    "joiner": "joiner-epoch-99-avg-1.onnx",
+                    "tokens": "tokens.txt",
+                    "num_threads": 1,
+                    "sample_rate": 16000,
+                    "feature_dim": 80,
+                    "decoding_method": "greedy_search",
+                    "debug": false
+                }
+            },
+            "opus_mt": {
+                "path": "models/translation/opus-mt/en-zh",
+                "type": "translation",
+                "enabled": true,
+                "config": {
+                    "use_onnx": true,
+                    "onnx_config": {
+                        "use_io_binding": false,
+                        "num_beams": 4,
+                        "early_stopping": true,
+                        "length_penalty": 0.6
+                    }
+                }
+            },
+            "argos": {
+                "path": "models/translation/argos-translate/packages/translate-en_zh-1_9",
+                "type": "translation",
+                "enabled": true,
+                "config": {
+                    "languages": {
+                        "source": "en",
+                        "target": "zh"
+                    }
+                }
+            }
+        },
+        "performance": {
+            "batch_size": 1,
+            "max_length": 512,
+            "cache_size": 1000
+        },
+        "logging": {
+            "level": "INFO",
+            "file": "logs/app.log"
+        },
+        "ui": {
+            "window_title": "实时字幕",
+            "window_width": 800,
+            "window_height": 150,
+            "window_x": 100,
+            "window_y": 100,
+            "font_size": 24,
+            "font_color": "#FFFFFF",
+            "background_color": "#000000",
+            "background_opacity": 0.7,
+            "window_opacity": 0.8
+        }
+    },
+    "window": {
+        "pos_x": 402,
+        "pos_y": 118,
+        "width": 791,
+        "height": 397,
+        "opacity": 0.8980392156862745
+    }
+}

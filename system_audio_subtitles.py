@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3 
 
 
 import sys
@@ -545,10 +545,10 @@ class SubtitleWindow(QMainWindow):
                 print(f"文件总时长: {duration:.2f} 秒")
                 
                 # 启动文件转录线程
-                self.audio_thread = threading.Thread(
-                    target=self.transcribe_file,
-                    args=(self.file_path, duration)
-                )
+                    self.audio_thread = threading.Thread(
+                        target=self.transcribe_file,
+                        args=(self.file_path, duration)
+                    )
                 self.audio_thread.daemon = True
                 self.audio_thread.start()
                 
@@ -587,7 +587,7 @@ class SubtitleWindow(QMainWindow):
                     self.ffmpeg_process.kill()
                 except:
                     pass
-            self.ffmpeg_process = None
+                self.ffmpeg_process = None
         
         # 使用 QTimer 延迟更新 UI
         QTimer.singleShot(100, self._update_ui_after_stop)
@@ -655,7 +655,7 @@ class SubtitleWindow(QMainWindow):
                 self.signals.new_text.emit("创建识别器失败")
                 self.signals.transcription_finished.emit()
                 return
-            
+
             # 第一阶段：读取音频数据（0-50%）
             print("第一阶段：读取音频数据...")
             all_chunks = []
@@ -664,8 +664,8 @@ class SubtitleWindow(QMainWindow):
             
             # 使用 ffmpeg 提取音频
             process = subprocess.Popen([
-                'ffmpeg',
-                '-i', file_path,
+                    'ffmpeg',
+                    '-i', file_path,
                 '-ar', '16000',
                 '-ac', '1',
                 '-f', 's16le',
@@ -707,14 +707,14 @@ class SubtitleWindow(QMainWindow):
             
             for i, chunk in enumerate(all_chunks):
                 if not self.is_running:
-                    break
-                
-                # 处理音频数据
+                            break
+                        
+                        # 处理音频数据
                 if rec.AcceptWaveform(chunk):
-                    result = json.loads(rec.Result())
-                    if result.get('text', '').strip():
+                            result = json.loads(rec.Result())
+                            if result.get('text', '').strip():
                         text = self.add_punctuation(result['text'])
-                        self.signals.new_text.emit(text)
+                                    self.signals.new_text.emit(text)
                 
                 # 更新处理进度（50-99%）
                 current_time = time.time()
@@ -725,17 +725,17 @@ class SubtitleWindow(QMainWindow):
                     last_update_time = current_time
             
             # 处理最终结果
-            final_result = json.loads(rec.FinalResult())
-            if final_result.get('text', '').strip():
+                final_result = json.loads(rec.FinalResult())
+                if final_result.get('text', '').strip():
                 text = self.add_punctuation(final_result['text'])
-                self.signals.new_text.emit(text)
-            
+                        self.signals.new_text.emit(text)
+                
             # 转录完成，设置进度为 100%
-            self.signals.progress_updated.emit(100, "转录完成 (100%)")
+                self.signals.progress_updated.emit(100, "转录完成 (100%)")
             print("转录处理完成")
-            
+                
             # 发送完成信号
-            self.signals.transcription_finished.emit()
+                self.signals.transcription_finished.emit()
             
         except Exception as e:
             print(f"转录过程错误: {e}")
@@ -1062,7 +1062,7 @@ class SubtitleWindow(QMainWindow):
                             return
                 except Exception as e:
                     print(f"检查文件内容错误: {e}")
-            
+
             # 获取当前时间作为文件名的一部分
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             

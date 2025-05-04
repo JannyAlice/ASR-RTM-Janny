@@ -3,9 +3,30 @@ import numpy as np
 from typing import Optional, Union, Dict, Any
 import sherpa_onnx
 
-
 class SherpaOnnxASR:
     """Sherpa-ONNX ASR 引擎实现"""
+
+    def _get_logger(self):
+        """
+        获取日志记录器
+
+        Returns:
+            Logger: 日志记录器实例
+        """
+        try:
+            from src.utils.sherpa_logger import SherpaLogger
+            return SherpaLogger().logger
+        except ImportError:
+            # 如果导入失败，创建一个标准的日志记录器
+            import logging
+            logger = logging.getLogger("sherpa_engine")
+            if not logger.handlers:  # 避免重复添加处理器
+                handler = logging.StreamHandler()
+                handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+                logger.addHandler(handler)
+                logger.setLevel(logging.DEBUG)
+            return logger
+
     def __init__(self, model_dir: str, model_config: Dict[str, Any] = None):
         """
         初始化 Sherpa-ONNX ASR 引擎
@@ -13,6 +34,9 @@ class SherpaOnnxASR:
         Args:
             model_dir: 模型目录路径
             model_config: 模型配置，如果为None则使用默认配置
+
+        Raises:
+            ValueError: 模型配置无效时
         """
         self.model_dir = model_dir
         self.model_config = model_config
@@ -26,7 +50,128 @@ class SherpaOnnxASR:
         if model_config and "type" in model_config:
             self.is_int8 = model_config["type"].lower() == "int8"
 
+        # 初始化日志记录器
+        self._logger = self._get_logger()
+
+    def _validate_model_config(self) -> None:
+        """
+        验证模型配置的有效性
+
+        Raises:
+            ValueError: 配置无效时
+        """
+        if not self.model_config:
+            self.model_config = {}
+
+        # 设置默认配置
+        default_config = {
+            "type": "int8",
+            "name": "0626",
+            "sample_rate": 16000,
+            "num_threads": 4,
+            "enable_endpoint": 1,
+            "rule1_min_trailing_silence": 3.0,
+            "rule2_min_trailing_silence": 1.5,
+            "rule3_min_utterance_length": 25
+        }
+
+        for key, value in default_config.items():
+            if key not in self.model_config:
+                self.model_config[key] = value
+
+    def _detect_model_files(self) -> Dict[str, str]:
+        """
+        智能检测模型文件（改进版）
+
+        Returns:
+            Dict[str, str]: 检测到的模型文件映射
+
+        Raises:
+            RuntimeError: 未找到有效模型文件
+        """
+        sherpa_logger = self._logger
+
+        # 结构化文件匹配规则（Sherpa-ONNX标准命名规范）
+        file_patterns = {
+            "encoder": {
+                "required": ["encoder", "chunk-16-left-128"],
+                "exclude": ["decoder", "joiner"],
+                "extension": ".onnx"
+            },
+            "decoder": {
+                "required": ["decoder", "chunk-16-left-128"],
+                "exclude": ["encoder", "joiner"],
+                "extension": ".onnx"
+            },
+            "joiner": {
+                "required": ["joiner", "chunk-16-left-128"],
+                "exclude": ["encoder", "decoder"],
+                "extension": ".onnx"
+            },
+            "tokens": {
+                "required": ["tokens"],
+                "exclude": ["encoder", "decoder", "joiner"],
+                "extension": ".txt"
+            }
+        }
+
+        detected_files = {}
+
+        # 遍历每个文件类型进行检测
+        for file_type, patterns in file_patterns.items():
+            matching_files = []
+
+            # 遍历模型目录中的文件
+            for file in os.listdir(self.model_dir):
+                file_lower = file.lower()
+
+                # 1. 检查文件扩展名（不区分大小写）
+                if not file_lower.endswith(patterns["extension"].lower()):
+                    continue
+
+                # 2. 检查必须包含的关键词
+                if not all(p in file_lower for p in patterns["required"]):
+                    continue
+
+                # 3. 排除冲突关键词
+                if any(e in file_lower for e in patterns["exclude"]):
+                    continue
+
+                # 4. 只对ONNX文件检查int8配置一致性
+                if patterns["extension"].lower() == ".onnx":
+                    is_int8_file = ".int8." in file_lower
+                    if self.is_int8 != is_int8_file:
+                        continue
+
+                matching_files.append(file)
+                sherpa_logger.debug(f"找到候选文件: {file}")
+
+            # 在循环外检查匹配结果
+            if not matching_files:
+                error_details = (
+                    f"未找到{file_type}模型文件\n"
+                    f"搜索路径: {self.model_dir}\n"
+                    f"必须包含: {patterns['required']}\n"
+                    f"排除包含: {patterns['exclude']}\n"
+                    f"文件类型: {'int8' if self.is_int8 else '标准'}"
+                )
+                sherpa_logger.error(error_details)
+                raise RuntimeError(error_details)
+
+            # 选择第一个匹配的文件
+            detected_files[file_type] = os.path.join(self.model_dir, matching_files[0])
+            sherpa_logger.info(f"已选择{file_type}模型文件: {detected_files[file_type]}")
+
+        return detected_files
+
     def setup(self) -> bool:
+        """初始化 Sherpa-ONNX ASR 引擎
+
+        Returns:
+            bool: 初始化是否成功
+        Raises:
+            RuntimeError: 模型初始化失败时
+        """
         """
         初始化 Sherpa-ONNX ASR
 
@@ -35,145 +180,43 @@ class SherpaOnnxASR:
         """
         # 导入 Sherpa-ONNX 日志工具
         try:
-            from src.utils.sherpa_logger import sherpa_logger
+            from src.utils.sherpa_logger import SherpaLogger
+            sherpa_logger = SherpaLogger().logger
         except ImportError:
             # 如果导入失败，创建一个简单的日志记录器
-            class DummyLogger:
-                def debug(self, msg): print(f"DEBUG: {msg}")
-                def info(self, msg): print(f"INFO: {msg}")
-                def warning(self, msg): print(f"WARNING: {msg}")
-                def error(self, msg): print(f"ERROR: {msg}")
-            sherpa_logger = DummyLogger()
+            import logging
+            sherpa_logger = logging.getLogger("sherpa_engine")
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+            sherpa_logger.addHandler(handler)
+            sherpa_logger.setLevel(logging.DEBUG)
 
         try:
+            # 验证模型配置
+            self._validate_model_config()
+
+            # 检测模型文件
+            model_files = self._detect_model_files()
+
             sherpa_logger.info(f"初始化 Sherpa-ONNX ASR，模型目录: {self.model_dir}")
             sherpa_logger.info(f"是否使用 int8 量化模型: {self.is_int8}")
 
-            # 确定模型文件名
-            # 检查是否是0626模型
-            is_0626 = self.model_config and self.model_config.get("name") == "0626" or "2023-06-26" in self.model_dir
-
-            # 首先尝试检测目录中的实际文件
-            encoder_files = []
-            decoder_files = []
-            joiner_files = []
-
-            # 列出目录中的所有文件
-            try:
-                for file in os.listdir(self.model_dir):
-                    if file.startswith("encoder") and file.endswith(".onnx"):
-                        encoder_files.append(file)
-                    elif file.startswith("decoder") and file.endswith(".onnx"):
-                        decoder_files.append(file)
-                    elif file.startswith("joiner") and file.endswith(".onnx"):
-                        joiner_files.append(file)
-
-                sherpa_logger.info(f"找到的encoder文件: {encoder_files}")
-                sherpa_logger.info(f"找到的decoder文件: {decoder_files}")
-                sherpa_logger.info(f"找到的joiner文件: {joiner_files}")
-            except Exception as e:
-                sherpa_logger.error(f"列出目录文件失败: {e}")
-
-            if is_0626:
-                # 使用0626模型的文件名
-                # 优先使用非int8版本
-                if encoder_files:
-                    # 优先选择非int8版本
-                    encoder_file = next((f for f in encoder_files if "chunk-16-left-128.onnx" in f and ".int8." not in f),
-                                       next((f for f in encoder_files if "chunk-16-left-128" in f),
-                                            "encoder-epoch-99-avg-1-chunk-16-left-128.onnx"))
-                else:
-                    encoder_file = "encoder-epoch-99-avg-1-chunk-16-left-128.onnx"
-
-                if decoder_files:
-                    decoder_file = next((f for f in decoder_files if "chunk-16-left-128.onnx" in f and ".int8." not in f),
-                                       next((f for f in decoder_files if "chunk-16-left-128" in f),
-                                            "decoder-epoch-99-avg-1-chunk-16-left-128.onnx"))
-                else:
-                    decoder_file = "decoder-epoch-99-avg-1-chunk-16-left-128.onnx"
-
-                if joiner_files:
-                    joiner_file = next((f for f in joiner_files if "chunk-16-left-128.onnx" in f and ".int8." not in f),
-                                      next((f for f in joiner_files if "chunk-16-left-128" in f),
-                                           "joiner-epoch-99-avg-1-chunk-16-left-128.onnx"))
-                else:
-                    joiner_file = "joiner-epoch-99-avg-1-chunk-16-left-128.onnx"
-
-                sherpa_logger.info(f"使用0626模型文件名: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
-            else:
-                # 使用现有模型的文件名
-                if self.is_int8:
-                    # 优先使用int8版本
-                    if encoder_files:
-                        encoder_file = next((f for f in encoder_files if ".int8." in f), "encoder-epoch-99-avg-1.int8.onnx")
-                    else:
-                        encoder_file = "encoder-epoch-99-avg-1.int8.onnx"
-
-                    if decoder_files:
-                        decoder_file = next((f for f in decoder_files if ".int8." in f), "decoder-epoch-99-avg-1.int8.onnx")
-                    else:
-                        decoder_file = "decoder-epoch-99-avg-1.int8.onnx"
-
-                    if joiner_files:
-                        joiner_file = next((f for f in joiner_files if ".int8." in f), "joiner-epoch-99-avg-1.int8.onnx")
-                    else:
-                        joiner_file = "joiner-epoch-99-avg-1.int8.onnx"
-                else:
-                    # 优先使用非int8版本
-                    if encoder_files:
-                        encoder_file = next((f for f in encoder_files if ".int8." not in f), "encoder-epoch-99-avg-1.onnx")
-                    else:
-                        encoder_file = "encoder-epoch-99-avg-1.onnx"
-
-                    if decoder_files:
-                        decoder_file = next((f for f in decoder_files if ".int8." not in f), "decoder-epoch-99-avg-1.onnx")
-                    else:
-                        decoder_file = "decoder-epoch-99-avg-1.onnx"
-
-                    if joiner_files:
-                        joiner_file = next((f for f in joiner_files if ".int8." not in f), "joiner-epoch-99-avg-1.onnx")
-                    else:
-                        joiner_file = "joiner-epoch-99-avg-1.onnx"
-
-                sherpa_logger.info(f"使用现有模型文件名: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
-
-            sherpa_logger.info(f"使用模型文件: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
-
-            # 检查模型文件
-            required_files = {
-                "encoder": encoder_file,
-                "decoder": decoder_file,
-                "joiner": joiner_file,
-                "tokens": "tokens.txt"
-            }
-
-            # 验证所有必需文件
-            for file_type, file_name in required_files.items():
-                file_path = os.path.join(self.model_dir, file_name)
-                if not os.path.exists(file_path):
-                    error_msg = f"错误: 缺少{file_type}模型文件: {file_path}"
-                    sherpa_logger.error(error_msg)
-                    print(error_msg)
-                    return False
-                else:
-                    sherpa_logger.info(f"找到{file_type}模型文件: {file_path}")
-
             # 配置识别器
             self.config = {
-                "encoder": os.path.join(self.model_dir, encoder_file),
-                "decoder": os.path.join(self.model_dir, decoder_file),
-                "joiner": os.path.join(self.model_dir, joiner_file),
-                "tokens": os.path.join(self.model_dir, "tokens.txt"),
-                "num_threads": 4,  # 使用多线程加速
-                "sample_rate": self.sample_rate,
+                "encoder": model_files["encoder"],
+                "decoder": model_files["decoder"],
+                "joiner": model_files["joiner"],
+                "tokens": model_files["tokens"],
+                "num_threads": self.model_config.get("num_threads", 4),
+                "sample_rate": self.model_config.get("sample_rate", 16000),
                 "feature_dim": 80,
                 "decoding_method": "greedy_search",
                 "debug": False,
                 # 添加端点检测参数，参考TMSpeech项目
-                "enable_endpoint": 1,  # 启用端点检测
-                "rule1_min_trailing_silence": 2.4,  # 基本静音阈值(秒)
-                "rule2_min_trailing_silence": 1.2,  # 长句中的静音阈值(秒)
-                "rule3_min_utterance_length": 20    # 长句判定阈值(帧)
+                "enable_endpoint": self.model_config.get("enable_endpoint", 1),
+                "rule1_min_trailing_silence": self.model_config.get("rule1_min_trailing_silence", 3.0),
+                "rule2_min_trailing_silence": self.model_config.get("rule2_min_trailing_silence", 1.5),
+                "rule3_min_utterance_length": self.model_config.get("rule3_min_utterance_length", 25)
             }
 
             sherpa_logger.info(f"识别器配置: {self.config}")
@@ -186,36 +229,96 @@ class SherpaOnnxASR:
                         self.config[key] = value
                 sherpa_logger.info(f"使用用户配置覆盖默认值: {user_config}")
 
+            # 从 config_manager 获取配置
+            try:
+                from src.utils.config_manager import config_manager
+                asr_config = config_manager.get_config("asr")
+                if asr_config:
+                    for key, value in asr_config.items():
+                        if key in self.config:
+                            self.config[key] = value
+                    sherpa_logger.info(f"从 config_manager 获取 ASR 配置: {asr_config}")
+            except ImportError:
+                sherpa_logger.warning("无法导入 config_manager，使用默认配置")
+
             # 使用 OnlineRecognizer 类的 from_transducer 静态方法创建实例
-            # 这是 sherpa-onnx 1.11.2 版本的正确 API
+            # 这是 sherpa-onnx 版本的 API
             try:
                 sherpa_logger.info("创建 OnlineRecognizer 实例...")
-                self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
-                    encoder=self.config["encoder"],
-                    decoder=self.config["decoder"],
-                    joiner=self.config["joiner"],
-                    tokens=self.config["tokens"],
-                    num_threads=self.config["num_threads"],
-                    sample_rate=self.config["sample_rate"],
-                    feature_dim=self.config["feature_dim"],
-                    decoding_method=self.config["decoding_method"]
-                )
-                sherpa_logger.info("OnlineRecognizer 实例创建成功")
+
+                # 确保所有路径都是绝对路径
+                for file_type in ["encoder", "decoder", "joiner", "tokens"]:
+                    if not os.path.isabs(self.config[file_type]):
+                        self.config[file_type] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", self.config[file_type])
+
+                    file_path = self.config[file_type]
+                    sherpa_logger.info(f"检查模型文件: {file_type} = {file_path}")
+
+                    if not os.path.exists(file_path):
+                        error_msg = f"模型文件不存在: {file_path}"
+                        sherpa_logger.error(error_msg)
+                        raise FileNotFoundError(error_msg)
+
+                    if not os.access(file_path, os.R_OK):
+                        error_msg = f"无法读取模型文件: {file_path}"
+                        sherpa_logger.error(error_msg)
+                        raise PermissionError(error_msg)
+
+                    # 记录文件大小和修改时间
+                    file_stat = os.stat(file_path)
+                    sherpa_logger.info(f"{file_type}文件大小: {file_stat.st_size} 字节, 修改时间: {file_stat.st_mtime}")
+
+                # 尝试获取模型文件的详细信息
+                def log_model_file_details(file_path):
+                    try:
+                        import onnx
+                        model = onnx.load(file_path)
+                        sherpa_logger.info(f"模型文件 {file_path} 详细信息:")
+                        sherpa_logger.info(f"图名称: {model.graph.name}")
+                        sherpa_logger.info(f"节点数: {len(model.graph.node)}")
+                        sherpa_logger.info(f"输入数: {len(model.graph.input)}")
+                        sherpa_logger.info(f"输出数: {len(model.graph.output)}")
+                    except Exception as e:
+                        sherpa_logger.warning(f"无法获取 {file_path} 的模型详细信息: {e}")
+
+                # 记录模型文件详细信息
+                log_model_file_details(self.config["encoder"])
+                log_model_file_details(self.config["decoder"])
+                log_model_file_details(self.config["joiner"])
+
+                # 尝试创建 OnlineRecognizer
+                sherpa_logger.info("配置参数:")
+                for key, value in self.config.items():
+                    sherpa_logger.info(f"{key}: {value}")
+
+                try:
+                    self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+                        encoder=self.config["encoder"],
+                        decoder=self.config["decoder"],
+                        joiner=self.config["joiner"],
+                        tokens=self.config["tokens"],
+                        num_threads=self.config.get("num_threads", 4),
+                        sample_rate=self.config.get("sample_rate", 16000),
+                        feature_dim=self.config.get("feature_dim", 80),
+                        decoding_method=self.config.get("decoding_method", "greedy_search"),
+                        # 添加端点检测参数
+                        enable_endpoint_detection=bool(self.config.get("enable_endpoint", 1)),
+                        rule1_min_trailing_silence=float(self.config.get("rule1_min_trailing_silence", 3.0)),
+                        rule2_min_trailing_silence=float(self.config.get("rule2_min_trailing_silence", 1.5)),
+                        rule3_min_utterance_length=float(self.config.get("rule3_min_utterance_length", 25))
+                    )
+                    sherpa_logger.info("OnlineRecognizer 实例创建成功")
+                except Exception as e:
+                    error_msg = f"OnlineRecognizer 创建失败: {str(e)}"
+                    sherpa_logger.error(error_msg)
+                    raise RuntimeError(error_msg) from e
             except Exception as e:
-                error_msg = f"使用 from_transducer 创建实例失败: {e}"
+                error_msg = f"创建 OnlineRecognizer 实例失败: {e}"
                 sherpa_logger.error(error_msg)
-                print(error_msg)
+                # 打印详细的异常堆栈信息
                 import traceback
                 sherpa_logger.error(traceback.format_exc())
-                # 创建一个空的实例
-                try:
-                    self.recognizer = sherpa_onnx.OnlineRecognizer()
-                    sherpa_logger.warning("创建了一个空的 OnlineRecognizer 实例")
-                except Exception as e2:
-                    error_msg = f"创建空的 OnlineRecognizer 实例失败: {e2}"
-                    sherpa_logger.error(error_msg)
-                    print(error_msg)
-                    return False
+                raise RuntimeError(error_msg)
 
             model_type = "int8量化" if self.is_int8 else "标准"
             success_msg = f"Sherpa-ONNX ASR ({model_type}模型) 初始化成功"
@@ -291,6 +394,12 @@ class SherpaOnnxASR:
                 # 使用 get_result 获取结果
                 result = self.recognizer.get_result(stream)
                 if result:
+                    # 使用正则表达式处理结果，确保每个句子以句号结尾
+                    import re
+                    result = re.sub(r'(?<=[a-zA-Z0-9])(?=[A-Z])', '. ', result)
+                    result = re.sub(r'\s+$', '', result)  # 去除末尾空格
+                    if not result.endswith('.'):
+                        result += '.'  # 确保结果以句号结尾
                     print(f"DEBUG: 转录结果: {result}")
                 return result if result else None
             except Exception as e:
@@ -418,6 +527,13 @@ class SherpaOnnxASR:
                 temp_wav_path
             ]
 
+            # 确保 self.recognizer 已经正确初始化
+            if not self.recognizer:
+                error_msg = "未初始化识别器，无法转录文件"
+                sherpa_logger.error(error_msg)
+                print(error_msg)
+                return None
+
             cmd_str = ' '.join(ffmpeg_cmd)
             sherpa_logger.info(f"执行命令: {cmd_str}")
             print(f"执行命令: {cmd_str}")
@@ -442,7 +558,8 @@ class SherpaOnnxASR:
                     sherpa_logger.info(f"WAV 文件格式: 通道数={channels}, 采样宽度={sample_width}, 采样率={sample_rate}")
 
                     if channels != 1 or sample_width != 2 or sample_rate != 16000:
-                        error_msg = f"WAV 文件格式不正确: 通道数={channels}, 采样宽度={sample_width}, 采样率={sample_rate}"
+                        error_msg = (f"WAV 文件格式不正确: 通道数={channels}, "
+                                     f"采样宽度={sample_width}, 采样率={sample_rate}")
                         sherpa_logger.error(error_msg)
                         print(error_msg)
                         return None
@@ -495,7 +612,12 @@ class SherpaOnnxASR:
                 # 处理这个块
                 try:
                     stream.accept_waveform(16000, chunk)
-                    sherpa_logger.debug(f"接受音频数据成功")
+                    sherpa_logger.debug("接受音频数据成功")
+
+                    # 检查端点
+                    if self.config["enable_endpoint"]:
+                        # 移除重复的端点检测逻辑
+                        pass
                 except Exception as e:
                     error_msg = f"接受音频数据失败: {e}"
                     sherpa_logger.error(error_msg)
@@ -511,18 +633,6 @@ class SherpaOnnxASR:
                     sherpa_logger.debug(f"解码完成，解码次数: {decode_count}")
                 except Exception as e:
                     error_msg = f"解码失败: {e}"
-                    sherpa_logger.error(error_msg)
-                    print(error_msg)
-                    continue
-
-                # 获取部分结果
-                try:
-                    partial_result = self.recognizer.get_result(stream)
-                    if partial_result:
-                        sherpa_logger.info(f"部分结果: {partial_result}")
-                        print(f"部分结果: {partial_result}")
-                except Exception as e:
-                    error_msg = f"获取部分结果失败: {e}"
                     sherpa_logger.error(error_msg)
                     print(error_msg)
                     continue
@@ -551,6 +661,12 @@ class SherpaOnnxASR:
             # 解码
             try:
                 sherpa_logger.info("最终解码...")
+
+                # 检查端点
+                if self.config["enable_endpoint"]:
+                    # 移除重复的端点检测逻辑
+                    pass
+
                 decode_count = 0
                 while self.recognizer.is_ready(stream):
                     self.recognizer.decode_stream(stream)
@@ -609,3 +725,24 @@ class SherpaOnnxASR:
         """清理资源"""
         self.recognizer = None
         self.stream = None
+
+    def on_sentence_done(self, text: str) -> None:
+        """
+        处理句子结束事件
+
+        Args:
+            text: 识别到的句子文本
+        """
+        try:
+            from src.utils.sherpa_logger import sherpa_logger
+        except ImportError:
+            class DummyLogger:
+                def debug(self, msg): print(f"DEBUG: {msg}")
+                def info(self, msg): print(f"INFO: {msg}")
+                def warning(self, msg): print(f"WARNING: {msg}")
+                def error(self, msg): print(f"ERROR: {msg}")
+            sherpa_logger = DummyLogger()
+
+        sherpa_logger.info(f"句子结束: {text}")
+        # 这里可以添加更多的处理逻辑，例如将结果发送到UI或其他模块
+        print(f"句子结束: {text}")

@@ -1,164 +1,168 @@
 #!/usr/bin/env python3
 """
 配置管理模块
-负责加载、保存和管理应用程序配置
+负责加载和管理配置信息
 """
 import os
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 class ConfigManager:
-    """配置管理器类，处理应用程序配置的加载和保存"""
+    """配置管理类"""
+    _instance = None
+    _config = None
 
-    def __init__(self, config_dir: str = "config", config_file: str = "settings.json"):
-        """
-        初始化配置管理器
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ConfigManager, cls).__new__(cls)
+        return cls._instance
 
-        参数:
-            config_dir: 配置文件目录
-            config_file: 配置文件名
-        """
-        self.config_dir = config_dir
-        self.config_file = config_file
-        self.config_path = os.path.join(config_dir, config_file)
-        self.config = {}
+    def __init__(self):
+        if self._config is None:
+            self._config = self.load_config()
+            if not self.validate_config():
+                raise ValueError("配置验证失败")
 
-        # 确保配置目录存在
-        os.makedirs(config_dir, exist_ok=True)
+    @property
+    def config(self) -> Dict[str, Any]:
+        """获取配置"""
+        return self._config
 
-        # 加载配置
-        self.load_config()
-
-    def load_config(self) -> None:
-        """从文件加载配置"""
+    def load_config(self) -> Dict[str, Any]:
+        """加载配置文件"""
         try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    self.config = json.load(f)
-                print(f"[DEBUG] ConfigManager.load_config: 配置已从 {self.config_path} 加载")
-                print(f"[DEBUG] ConfigManager.load_config: config = {self.config}")
-                logging.info(f"配置已从 {self.config_path} 加载")
-            else:
-                print(f"[DEBUG] ConfigManager.load_config: 配置文件 {self.config_path} 不存在，将使用默认配置")
-                logging.info(f"配置文件 {self.config_path} 不存在，将使用默认配置")
-                self.config = self._get_default_config()
-                self.save_config()  # 保存默认配置
+            config_path = os.path.join('config', 'config.json')
+            logger.debug(f"尝试加载配置文件: {config_path}")
+            
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                
+            logger.info("配置文件加载成功")
+            
+            # 验证配置
+            if not self.validate_config(config):
+                raise ValueError("配置验证失败")
+                
+            return config
+            
+        except FileNotFoundError:
+            logger.error(f"配置文件不存在: {config_path}")
+            raise
+        except json.JSONDecodeError as e:
+            logger.error(f"配置文件格式错误: {str(e)}")
+            raise
         except Exception as e:
-            print(f"[DEBUG] ConfigManager.load_config: 加载配置时出错: {e}")
-            logging.error(f"加载配置时出错: {e}")
-            self.config = self._get_default_config()
+            logger.error(f"加载配置文件时发生错误: {str(e)}")
+            raise
 
-    def save_config(self) -> None:
+    def save_config(self) -> bool:
         """保存配置到文件"""
         try:
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, ensure_ascii=False, indent=4)
-            logging.info(f"配置已保存到 {self.config_path}")
+            config_path = os.path.join('config', 'config.json')
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(self._config, f, indent=4, ensure_ascii=False)
+            logger.info("配置保存成功")
+            return True
         except Exception as e:
-            logging.error(f"保存配置时出错: {e}")
+            logger.error(f"保存配置失败: {str(e)}")
+            return False
 
-    def get_config(self, section: str, default: Any = None) -> Any:
-        """
-        获取指定部分的配置
+    def get_model_config(self, model_name: str) -> Optional[Dict[str, Any]]:
+        """获取指定模型的配置"""
+        try:
+            return self._config['asr']['models'].get(model_name)
+        except KeyError:
+            logger.error(f"未找到模型配置: {model_name}")
+            return None
 
-        参数:
-            section: 配置部分名称
-            default: 如果部分不存在，返回的默认值
+    def get_window_config(self) -> Dict[str, Any]:
+        """获取窗口配置"""
+        return self._config.get('window', {})
 
-        返回:
-            配置值或默认值
-        """
-        return self.config.get(section, default)
-
-    def get_nested_config(self, path: str, default: Any = None) -> Any:
-        """
-        获取嵌套配置
-
-        参数:
-            path: 配置路径，使用点表示法，如 "asr.models.vosk"
-            default: 如果路径不存在，返回的默认值
-
-        返回:
-            配置值或默认值
-        """
-        parts = path.split('.')
-        config = self.config
-
-        for part in parts:
-            if isinstance(config, dict) and part in config:
-                config = config[part]
-            else:
-                return default
-
-        return config
-
-    def get_ui_config(self, key: str, default: Any = None) -> Any:
-        """
-        获取UI配置
-
-        参数:
-            key: UI配置键
-            default: 如果键不存在，返回的默认值
-
-        返回:
-            UI配置值或默认值
-        """
-        ui_config = self.get_config("ui", {})
-        return ui_config.get(key, default)
-
-    def update_config(self, section: str, values: Dict[str, Any]) -> None:
-        """
-        更新配置的指定部分
-
-        参数:
-            section: 配置部分名称
-            values: 要更新的值字典
-        """
-        if section not in self.config:
-            self.config[section] = {}
-
-        self.config[section].update(values)
-
-    def update_and_save(self, section: str, values: Dict[str, Any]) -> None:
-        """
-        更新配置并保存
-
-        参数:
-            section: 配置部分名称
-            values: 要更新的值字典
-        """
-        self.update_config(section, values)
+    def update_window_config(self, config: Dict[str, Any]) -> None:
+        """更新窗口配置"""
+        self._config['window'] = config
         self.save_config()
 
-    def _get_default_config(self) -> Dict[str, Any]:
-        """获取默认配置"""
-        return {
-            "window": {
-                "pos_x": 100,
-                "pos_y": 100,
-                "width": 800,
-                "height": 600,
-                "background_mode": "translucent",
-                "opacity": 0.7
-            },
-            "ui": {
-                "font_size": 12,
-                "font_family": "Microsoft YaHei",
-                "theme": "dark"
-            },
-            "transcription": {
-                "default_model": "vosk",
-                "language": "zh",
-                "sample_rate": 16000
-            }
-        }
+    def get_default_model(self) -> str:
+        """获取默认模型名称"""
+        return self._config.get('transcription', {}).get('default_model', 'sherpa_0626')
+
+    def validate_model_files(self, model_path: str) -> bool:
+        """验证模型文件完整性"""
+        required_files = [
+            "encoder-epoch-99-avg-1-chunk-16-left-128.onnx",
+            "decoder-epoch-99-avg-1-chunk-16-left-128.onnx",
+            "joiner-epoch-99-avg-1-chunk-16-left-128.onnx",
+            "tokens.txt"
+        ]
+        
+        try:
+            for file in required_files:
+                file_path = os.path.join(model_path, file)
+                if not os.path.exists(file_path):
+                    logger.error(f"缺少模型文件: {file_path}")
+                    return False
+                    
+            logger.info("模型文件验证通过")
+            return True
+            
+        except Exception as e:
+            logger.error(f"验证模型文件时发生错误: {str(e)}")
+            return False
+
+    def validate_config(self, config: Dict[str, Any]) -> bool:
+        """
+        验证配置文件的完整性和正确性
+        Returns:
+            bool: 验证是否通过
+        """
+        required_keys = [
+            'app',
+            'transcription',
+            'asr.models',
+            'window'
+        ]
+        
+        try:
+            for key in required_keys:
+                parts = key.split('.')
+                temp = config
+                for part in parts:
+                    temp = temp[part]
+            return True
+        except Exception as e:
+            logger.error(f"配置验证失败: {str(e)}")
+            return False
 
 # 创建全局配置管理器实例
-# 使用 config.json 作为唯一的配置文件
-CONFIG_DIR = "config"
-CONFIG_FILE = "config.json"
-config_manager = ConfigManager(config_dir=CONFIG_DIR, config_file=CONFIG_FILE)
-print(f"[DEBUG] 创建全局配置管理器实例: config_dir={CONFIG_DIR}, config_file={CONFIG_FILE}")
+config_manager = ConfigManager()
+
+def load_config() -> Dict[str, Any]:
+    """
+    加载配置文件的便捷函数
+    Returns:
+        Dict[str, Any]: 配置信息字典
+    """
+    try:
+        config_path = 'config/config.json'
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            
+        # 验证配置
+        if not config_manager.validate_config(config):
+            raise ValueError("配置验证失败")
+            
+        return config
+        
+    except Exception as e:
+        logger.error(f"加载配置失败: {e}")
+        raise
+
+# 导出
+__all__ = ['ConfigManager', 'config_manager', 'load_config']
 
 

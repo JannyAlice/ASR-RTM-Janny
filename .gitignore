@@ -20,12 +20,12 @@ __pycache__/
 .specstory/
 .vscode/
 assets/
-config/
+# config/ 此目录需要代码管理
 docs/
 logs/
 models/
 python_examples/
 reports/
 test_tools/
-tests/
+# tests/ 此目录需要代码管理
 transcripts/

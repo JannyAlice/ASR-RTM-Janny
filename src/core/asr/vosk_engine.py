@@ -4,6 +4,8 @@ import numpy as np
 from typing import Optional, Union
 from vosk import Model, KaldiRecognizer
 
+from src.core import model_base
+
 
 class VoskASR:
     """VOSK ASR 引擎封装类"""
@@ -12,9 +14,10 @@ class VoskASR:
         """初始化 VOSK ASR 引擎
         
         Args:
-            model_path: VOSK 模型路径
+            model_path: VOSK 模型路径（从 config_manager 中获取）
         """
-        self.model_path = model_path
+        from src.utils.config_manager import config_manager
+        self.model_path = config_manager.get_nested_config(f"asr.models.{model_base}.path")
         self.model = None
         self.recognizer = None
         self.sample_rate = 16000

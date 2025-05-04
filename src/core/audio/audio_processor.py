@@ -8,6 +8,7 @@ import json
 import numpy as np
 import soundcard as sc
 from typing import List, Any
+from PyQt5.QtCore import QObject, pyqtSignal, QThread
 
 from src.core.signals import TranscriptionSignals
 
@@ -30,22 +31,152 @@ class AudioDevice:
     def __str__(self):
         return f"{self.name} ({self.id})"
 
-class AudioProcessor:
+class AudioWorker(QObject):
+    """音频处理工作线程"""
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+    new_text = pyqtSignal(str)
+    status = pyqtSignal(str)
+    progress = pyqtSignal(int, str)
+
+    def __init__(self, device, sample_rate, buffer_size, recognizer):
+        super().__init__()
+        self.device = device
+        self.sample_rate = sample_rate
+        self.buffer_size = buffer_size
+        self.recognizer = recognizer
+        self.running = True
+
+    def process(self):
+        """处理音频数据"""
+        start_time = time.time()
+        last_progress_update = time.time()
+
+        try:
+            with sc.get_microphone(id=str(self.device.id), include_loopback=True).recorder(
+                samplerate=self.sample_rate
+            ) as mic:
+                self.status.emit(f"正在从 {self.device.name} 捕获音频...")
+
+                while self.running:
+                    # 捕获音频数据
+                    data = mic.record(numframes=self.buffer_size)
+
+                    # 转换为单声道
+                    if data.shape[1] > 1:
+                        data = np.mean(data, axis=1)
+
+                    # 检查音频数据是否有效
+                    if np.max(np.abs(data)) < 0.01:
+                        continue
+
+                    try:
+                        # 处理音频数据
+                        engine_type = getattr(self.recognizer, 'engine_type', None)
+                        if engine_type and engine_type.startswith('sherpa'):
+                            # 对于 Sherpa-ONNX 模型，直接传递 numpy 数组
+                            accept_result = self.recognizer.AcceptWaveform(data)
+                        else:
+                            # 对于 Vosk 模型，转换为 16 位整数字节
+                            data_bytes = (data * 32767).astype(np.int16).tobytes()
+                            accept_result = self.recognizer.AcceptWaveform(data_bytes)
+
+                        if accept_result:
+                            # 获取完整结果
+                            result = self.recognizer.Result()
+                            text = self._parse_result(result)
+                            if text:
+                                self.new_text.emit(text)
+                        else:
+                            # 获取部分结果
+                            partial = self.recognizer.PartialResult()
+                            text = self._parse_partial_result(partial)
+                            if text:
+                                self.new_text.emit("PARTIAL:" + text)
+
+                        # 更新进度
+                        current_time = time.time()
+                        if current_time - last_progress_update >= 0.5:
+                            elapsed_seconds = current_time - start_time
+                            minutes = int(elapsed_seconds // 60)
+                            seconds = int(elapsed_seconds % 60)
+                            time_str = f"转录时长: {minutes:02d}:{seconds:02d}"
+                            self.progress.emit(50, time_str)
+                            last_progress_update = current_time
+
+                    except Exception as e:
+                        self.error.emit(f"音频处理错误: {str(e)}")
+                        
+        except Exception as e:
+            self.error.emit(f"音频捕获错误: {str(e)}")
+        finally:
+            self.finished.emit()
+
+    def _parse_result(self, result):
+        """解析完整识别结果"""
+        if isinstance(result, str) and not result.startswith('{'):
+            return result.strip()
+        
+        try:
+            if isinstance(result, str):
+                result_json = json.loads(result)
+            elif hasattr(result, 'text'):
+                result_json = {"text": result.text}
+            elif hasattr(result, '__str__'):
+                result_json = {"text": str(result)}
+            else:
+                return None
+
+            text = result_json.get('text', '').strip()
+            if text:
+                text = text[0].upper() + text[1:]
+                if text[-1] not in ['.', '?', '!']:
+                    text += '.'
+                return text
+        except:
+            return str(result).strip()
+        
+        return None
+
+    def _parse_partial_result(self, partial):
+        """解析部分识别结果"""
+        if isinstance(partial, str) and not partial.startswith('{'):
+            return partial.strip()
+        
+        try:
+            if isinstance(partial, str):
+                try:
+                    partial_json = json.loads(partial)
+                except json.JSONDecodeError:
+                    return partial.strip()
+            elif isinstance(partial, dict):
+                partial_json = partial
+            elif hasattr(partial, 'partial'):
+                partial_json = {'partial': str(partial.partial)}
+            else:
+                partial_json = {'partial': str(partial)}
+
+            return partial_json.get('partial', '').strip()
+        except:
+            return str(partial).strip()
+
+class AudioProcessor(QObject):
     """音频处理器类"""
+    # 定义 Qt 信号
+    new_text_signal = pyqtSignal(str)
+    error_signal = pyqtSignal(str)
+    status_signal = pyqtSignal(str)
+    progress_signal = pyqtSignal(int, str)
 
     def __init__(self, signals: TranscriptionSignals):
-        """
-        初始化音频处理器
-
-        Args:
-            signals: 信号实例
-        """
+        super().__init__()
         self.signals = signals
         self.current_device = None
         self.is_capturing = False
         self.capture_thread = None
         self.sample_rate = 16000
         self.buffer_size = 4000
+        self.worker_thread = None
 
     def get_audio_devices(self) -> List[AudioDevice]:
         """
@@ -90,67 +221,55 @@ class AudioProcessor:
         return True
 
     def start_capture(self, recognizer: Any) -> bool:
-        """
-        开始捕获音频
-
-        Args:
-            recognizer: 识别器实例
-
-        Returns:
-            bool: 开始捕获是否成功
-        """
+        """开始捕获音频"""
         if self.is_capturing:
             return False
 
         if not self.current_device:
-            self.signals.error_occurred.emit("未选择音频设备")
+            self.error_signal.emit("未选择音频设备")
             return False
 
-        # 设置捕获标志
-        self.is_capturing = True
-
-        # 初始化进度条为在线转录模式
-        self.signals.progress_updated.emit(50, "转录时长: 00:00")
-
-        # 创建捕获线程
-        self.capture_thread = threading.Thread(
-            target=self._capture_audio_thread,
-            args=(recognizer,),
-            daemon=True
+        # 创建工作线程
+        self.worker_thread = QThread()
+        self.worker = AudioWorker(
+            self.current_device,
+            self.sample_rate,
+            self.buffer_size,
+            recognizer
         )
+        self.worker.moveToThread(self.worker_thread)
+
+        # 连接信号
+        self.worker_thread.started.connect(self.worker.process)
+        self.worker.finished.connect(self.worker_thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
+
+        # 转发信号
+        self.worker.new_text.connect(lambda x: self.new_text_signal.emit(x))
+        self.worker.error.connect(lambda x: self.error_signal.emit(x))
+        self.worker.status.connect(lambda x: self.status_signal.emit(x))
+        self.worker.progress.connect(lambda x, y: self.progress_signal.emit(x, y))
 
         # 启动线程
-        self.capture_thread.start()
+        self.is_capturing = True
+        self.worker_thread.start()
 
         return True
 
     def stop_capture(self) -> bool:
-        """
-        停止捕获音频
-
-        Returns:
-            bool: 停止捕获是否成功
-        """
+        """停止捕获音频"""
         if not self.is_capturing:
             return False
 
-        # 清除捕获标志
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.running = False
+            
+        if self.worker_thread:
+            self.worker_thread.quit()
+            self.worker_thread.wait()
+            
         self.is_capturing = False
-
-        # 等待线程结束
-        if self.capture_thread and self.capture_thread.is_alive():
-            self.capture_thread.join(timeout=1.0)
-
-        self.capture_thread = None
-
-        # 重置进度条，但不立即更新，给字幕窗口留出时间显示保存信息
-        # 使用延迟重置进度条
-        def reset_progress_bar():
-            self.signals.progress_updated.emit(0, "%p% - %v/%m")
-
-        # 使用线程安全的方式延迟重置进度条
-        threading.Timer(1.0, reset_progress_bar).start()
-
         return True
 
     def _capture_audio_thread(self, recognizer: Any) -> None:

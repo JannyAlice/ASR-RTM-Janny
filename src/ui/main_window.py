@@ -29,9 +29,10 @@ except ImportError:
 class MainWindow(QMainWindow):
     """主窗口类"""
 
-    def __init__(self):
+    def __init__(self, recognizer=None):
         """初始化主窗口"""
         super().__init__()
+        self.recognizer = recognizer
 
         # 初始化COM
         com_handler.initialize_com()
@@ -157,7 +158,7 @@ class MainWindow(QMainWindow):
 
         # 更新菜单选中状态
         for key, action in self.menu_bar.model_menu.actions.items():
-            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626']:
+            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626_int8', 'sherpa_0626_std']:
                 action.setChecked(key == default_model)
 
         # 加载模型
@@ -912,7 +913,7 @@ class MainWindow(QMainWindow):
 
         # 更新菜单选中状态
         for key, action in self.menu_bar.model_menu.actions.items():
-            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626']:
+            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626_int8', 'sherpa_0626_std']:
                 action.setChecked(key == model_name)
 
         # 加载模型
@@ -970,7 +971,8 @@ class MainWindow(QMainWindow):
             'vosk': 'VOSK Small 模型',
             'sherpa_int8': 'Sherpa-ONNX int8量化模型',
             'sherpa_std': 'Sherpa-ONNX 标准模型',
-            'sherpa_0626': 'Sherpa-ONNX 2023-06-26模型',
+            'sherpa_0626_int8': 'Sherpa-ONNX 2023-06-26 int8 模型',
+            'sherpa_0626_std': 'Sherpa-ONNX 2023-06-26 标准模型',
             'argos': 'Argostranslate 模型',
             'opus': 'Opus-Mt-ONNX 模型'
         }
@@ -1079,6 +1081,43 @@ class MainWindow(QMainWindow):
             info += f"{name}: {status}\n"
 
         QMessageBox.information(self, "模型目录", info)
+
+    def show_asr_config_dialog(self):
+        """显示ASR配置对话框"""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFormLayout
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("ASR 配置")
+        layout = QVBoxLayout()
+
+        form_layout = QFormLayout()
+
+        # 创建标签和输入框
+        enable_endpoint_label = QLabel("启用端点检测:")
+        self.enable_endpoint_edit = QLineEdit(str(self.model_manager.current_engine.config.get("enable_endpoint", 1)))
+        form_layout.addRow(enable_endpoint_label, self.enable_endpoint_edit)
+
+        rule1_label = QLabel("规则1尾随静音时间 (秒):")
+        self.rule1_edit = QLineEdit(str(self.model_manager.current_engine.config.get("rule1_min_trailing_silence", 3.0)))
+        form_layout.addRow(rule1_label, self.rule1_edit)
+
+        rule2_label = QLabel("规则2尾随静音时间 (秒):")
+        self.rule2_edit = QLineEdit(str(self.model_manager.current_engine.config.get("rule2_min_trailing_silence", 1.5)))
+        form_layout.addRow(rule2_label, self.rule2_edit)
+
+        rule3_label = QLabel("规则3最小语音长度 (帧):")
+        self.rule3_edit = QLineEdit(str(self.model_manager.current_engine.config.get("rule3_min_utterance_length", 25)))
+        form_layout.addRow(rule3_label, self.rule3_edit)
+
+        layout.addLayout(form_layout)
+
+        # 创建保存按钮
+        save_button = QPushButton("保存")
+        save_button.clicked.connect(self.save_asr_config)
+        layout.addWidget(save_button)
+
+        dialog.setLayout(layout)
+        dialog.exec_()
 
     def search_model_documentation(self):
         """搜索模型文档"""

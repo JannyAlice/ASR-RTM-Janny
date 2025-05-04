@@ -39,19 +39,22 @@ class ModelMenu(QMenu):
         self.actions['vosk'] = QAction("VOSK Small 模型", self.parent(), checkable=True)
         self.actions['sherpa_int8'] = QAction("Sherpa-ONNX int8量化模型", self.parent(), checkable=True)
         self.actions['sherpa_std'] = QAction("Sherpa-ONNX 标准模型", self.parent(), checkable=True)
-        self.actions['sherpa_0626'] = QAction("Sherpa-ONNX 2023-06-26模型", self.parent(), checkable=True)
+        self.actions['sherpa_0626_int8'] = QAction("Sherpa-ONNX 2023-06-26 int8 模型", self.parent(), checkable=True)
+        self.actions['sherpa_0626_std'] = QAction("Sherpa-ONNX 2023-06-26 标准模型", self.parent(), checkable=True)
 
         # 将动作添加到组
         self.asr_group.addAction(self.actions['vosk'])
         self.asr_group.addAction(self.actions['sherpa_int8'])
         self.asr_group.addAction(self.actions['sherpa_std'])
-        self.asr_group.addAction(self.actions['sherpa_0626'])
+        self.asr_group.addAction(self.actions['sherpa_0626_int8'])
+        self.asr_group.addAction(self.actions['sherpa_0626_std'])
 
         # 将动作添加到ASR子菜单
         self.asr_menu.addAction(self.actions['vosk'])
         self.asr_menu.addAction(self.actions['sherpa_int8'])
         self.asr_menu.addAction(self.actions['sherpa_std'])
-        self.asr_menu.addAction(self.actions['sherpa_0626'])
+        self.asr_menu.addAction(self.actions['sherpa_0626_int8'])
+        self.asr_menu.addAction(self.actions['sherpa_0626_std'])
 
         # 创庯RTM翻译模型子菜单
         self.rtm_menu = QMenu("RTM 翻译模型", self.parent())
@@ -89,8 +92,11 @@ class ModelMenu(QMenu):
         self.actions['sherpa_std'].triggered.connect(
             lambda: main_window.set_asr_model("sherpa_std")
         )
-        self.actions['sherpa_0626'].triggered.connect(
-            lambda: main_window.set_asr_model("sherpa_0626")
+        self.actions['sherpa_0626_int8'].triggered.connect(
+            lambda: main_window.set_asr_model("sherpa_0626_int8")
+        )
+        self.actions['sherpa_0626_std'].triggered.connect(
+            lambda: main_window.set_asr_model("sherpa_0626_std")
         )
 
         # RTM模型选择信号
