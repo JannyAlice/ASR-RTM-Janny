@@ -292,6 +292,25 @@ class SherpaOnnxASR:
                     sherpa_logger.info(f"{key}: {value}")
 
                 try:
+                    # 记录详细的参数信息
+                    sherpa_logger.info("OnlineRecognizer.from_transducer 参数:")
+                    sherpa_logger.info(f"  encoder: {self.config['encoder']}")
+                    sherpa_logger.info(f"  decoder: {self.config['decoder']}")
+                    sherpa_logger.info(f"  joiner: {self.config['joiner']}")
+                    sherpa_logger.info(f"  tokens: {self.config['tokens']}")
+                    sherpa_logger.info(f"  num_threads: {self.config.get('num_threads', 4)}")
+                    sherpa_logger.info(f"  sample_rate: {self.config.get('sample_rate', 16000)}")
+                    sherpa_logger.info(f"  feature_dim: {self.config.get('feature_dim', 80)}")
+                    sherpa_logger.info(f"  decoding_method: {self.config.get('decoding_method', 'greedy_search')}")
+                    sherpa_logger.info(f"  enable_endpoint_detection: {bool(self.config.get('enable_endpoint', 1))}")
+                    sherpa_logger.info(f"  rule1_min_trailing_silence: {float(self.config.get('rule1_min_trailing_silence', 3.0))}")
+                    sherpa_logger.info(f"  rule2_min_trailing_silence: {float(self.config.get('rule2_min_trailing_silence', 1.5))}")
+                    sherpa_logger.info(f"  rule3_min_utterance_length: {float(self.config.get('rule3_min_utterance_length', 25))}")
+
+                    # 检查sherpa_onnx版本
+                    sherpa_logger.info(f"sherpa_onnx版本: {sherpa_onnx.__version__ if hasattr(sherpa_onnx, '__version__') else '未知'}")
+
+                    # 创建OnlineRecognizer实例
                     self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
                         encoder=self.config["encoder"],
                         decoder=self.config["decoder"],
@@ -308,9 +327,37 @@ class SherpaOnnxASR:
                         rule3_min_utterance_length=float(self.config.get("rule3_min_utterance_length", 25))
                     )
                     sherpa_logger.info("OnlineRecognizer 实例创建成功")
+
+                    # 测试创建流
+                    try:
+                        test_stream = self.recognizer.create_stream()
+                        sherpa_logger.info("测试创建流成功")
+                        # 不需要保存测试流
+                        del test_stream
+                    except Exception as stream_error:
+                        sherpa_logger.warning(f"测试创建流失败: {stream_error}")
+                        # 这不是致命错误，继续执行
+
                 except Exception as e:
                     error_msg = f"OnlineRecognizer 创建失败: {str(e)}"
                     sherpa_logger.error(error_msg)
+
+                    # 记录更详细的错误信息
+                    import traceback
+                    error_trace = traceback.format_exc()
+                    sherpa_logger.error(f"详细错误信息:\n{error_trace}")
+
+                    # 检查是否是已知的常见错误
+                    error_str = str(e).lower()
+                    if "no such file or directory" in error_str:
+                        sherpa_logger.error("错误原因: 模型文件不存在")
+                    elif "permission denied" in error_str:
+                        sherpa_logger.error("错误原因: 无权限访问模型文件")
+                    elif "invalid argument" in error_str:
+                        sherpa_logger.error("错误原因: 参数无效，可能是模型文件格式不正确")
+                    elif "out of memory" in error_str:
+                        sherpa_logger.error("错误原因: 内存不足")
+
                     raise RuntimeError(error_msg) from e
             except Exception as e:
                 error_msg = f"创建 OnlineRecognizer 实例失败: {e}"

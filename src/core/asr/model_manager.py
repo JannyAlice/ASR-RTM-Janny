@@ -3,14 +3,25 @@ ASR模型管理模块
 负责加载和管理ASR模型
 """
 import os
-import json
-import time
-import vosk
 import logging
 import traceback
 import numpy as np
-from typing import Optional, Dict, Any, Union
-from pathlib import Path
+import vosk
+from typing import Optional, Dict, Any, Union, List
+from PyQt5.QtCore import QObject, pyqtSignal
+
+# 信号管理器类
+class SignalManager(QObject):
+    """信号管理器类，用于管理ASR相关的信号"""
+
+    # 定义信号
+    new_text = pyqtSignal(str)  # 新文本信号，参数为文本内容
+    status_updated = pyqtSignal(str)  # 状态更新信号，参数为状态信息
+    error_occurred = pyqtSignal(str)  # 错误信号，参数为错误信息
+
+    def __init__(self):
+        """初始化信号管理器"""
+        super().__init__()
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -18,16 +29,16 @@ if not logger.handlers:
     # 创建处理器
     file_handler = logging.FileHandler('logs/asr_model_manager.log', encoding='utf-8')
     console_handler = logging.StreamHandler()
-    
+
     # 设置格式
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
     console_handler.setFormatter(formatter)
-    
+
     # 添加处理器
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
-    
+
     # 设置日志级别
     logger.setLevel(logging.INFO)
 
@@ -43,11 +54,23 @@ except ImportError:
     HAS_SHERPA_ONNX = False
     print("警告: 未安装 sherpa_onnx 模块，Sherpa-ONNX 功能将不可用")
 
-class ASRModelManager:
+class ASRModelManager(QObject):
     """ASR模型管理器类"""
+
+    # 定义信号
+    model_loaded = pyqtSignal(bool)  # 模型加载完成信号，参数为是否成功
+    recognition_started = pyqtSignal()  # 识别开始信号
+    recognition_stopped = pyqtSignal()  # 识别停止信号
+    recognition_result = pyqtSignal(str)  # 识别结果信号，参数为识别文本
+    error_occurred = pyqtSignal(str)  # 错误信号，参数为错误信息
 
     def __init__(self):
         """初始化ASR模型管理器"""
+        super().__init__()  # 调用父类构造函数
+
+        # 创建信号管理器
+        self.signals = SignalManager()
+
         self.config = config_manager
         # 直接从 config.json 获取模型配置
         self.models_config = {}
@@ -61,9 +84,13 @@ class ASRModelManager:
         # 从配置文件获取默认模型类型
         self.model_type = self.config.config.get('transcription', {}).get('default_model', 'sherpa_0626')
         logger.info(f"使用默认模型类型: {self.model_type}")
-        
+
         # 用于音频转录的引擎
         self.current_engine = None
+
+        # 音频设备相关
+        self.current_device = None
+        self.is_recognizing = False
 
     def validate_model_files(self, model_path: str) -> bool:
         """验证模型文件完整性"""
@@ -75,17 +102,17 @@ class ASRModelManager:
                 "joiner-epoch-99-avg-1-chunk-16-left-128.onnx",
                 "tokens.txt"
             ]
-            
+
             # 检查每个文件是否存在
             for file in required_files:
                 file_path = os.path.join(model_path, file)
                 if not os.path.exists(file_path):
                     logger.error(f"模型文件不存在: {file_path}")
                     return False
-                    
+
             logger.info(f"模型文件验证通过: {model_path}")
             return True
-            
+
         except Exception as e:
             logger.error(f"验证模型文件时发生错误: {str(e)}")
             return False
@@ -94,7 +121,7 @@ class ASRModelManager:
         """加载ASR模型"""
         try:
             logger.info(f"开始加载模型: {model_name}")
-            
+
             # 调试信息
             print(f"[DEBUG] 尝试加载模型: {model_name}")
             print(f"[DEBUG] 当前配置中的模型列表: {list(self.models_config.keys())}")
@@ -115,12 +142,12 @@ class ASRModelManager:
                 return False
 
             print(f"[DEBUG] 模型路径: {model_path}")
-            
+
             # 验证模型路径和文件
             if not os.path.exists(model_path):
                 logger.error(f"错误: 模型路径不存在: {model_path}")
                 return False
-                
+
             if not self.validate_model_files(model_path):
                 logger.error(f"错误: 模型路径验证失败: {model_path}")
                 return False
@@ -128,11 +155,26 @@ class ASRModelManager:
             # 更新当前模型信息
             self.current_model_type = model_name
             logger.info(f"模型加载成功: {model_name}")
+
+            # 发射模型加载成功信号
+            self.model_loaded.emit(True)
+
+            # 更新状态
+            self.signals.status_updated.emit(f"已加载模型: {model_name}")
+
             return True
 
         except Exception as e:
-            logger.error(f"加载模型失败: {str(e)}")
+            error_msg = f"加载模型失败: {str(e)}"
+            logger.error(error_msg)
             logger.error(traceback.format_exc())
+
+            # 发射模型加载失败信号
+            self.model_loaded.emit(False)
+
+            # 发射错误信号
+            self.error_occurred.emit(error_msg)
+
             return False
 
     def _load_vosk_model(self, model_path: str) -> Any:
@@ -278,11 +320,11 @@ class ASRModelManager:
             if not model_path:
                 logger.error("模型路径为空")
                 return False
-                
+
             if not os.path.exists(model_path):
                 logger.error(f"模型路径不存在: {model_path}")
                 return False
-                
+
             # 检查必要的模型文件
             if self.model_type.startswith('sherpa'):
                 required_files = ['encoder', 'decoder', 'joiner', 'tokens.txt']
@@ -291,9 +333,9 @@ class ASRModelManager:
                     if not os.path.exists(file_path):
                         logger.error(f"模型文件不存在: {file_path}")
                         return False
-                        
+
             return True
-            
+
         except Exception as e:
             logger.error(f"验证模型路径时发生错误: {str(e)}")
             return False
@@ -455,13 +497,17 @@ class ASRModelManager:
                 if engine_type == "sherpa_0626_int8":
                     model_type = "int8"
                     model_name = "0626"
-                elif engine_type == "sherpa_0626_std":
+                elif engine_type == "sherpa_0626_std" or engine_type == "sherpa_0626":
                     model_type = "standard"
                     model_name = "0626"
                 else:
                     model_type = "int8" if engine_type == "sherpa_int8" else "standard"
                     model_name = ""
                 sherpa_logger.info(f"Sherpa-ONNX 模型类型: {model_type}, 模型名称: {model_name}")
+
+                # 记录模型路径和配置
+                sherpa_logger.info(f"模型路径: {model_config['path']}")
+                sherpa_logger.info(f"模型配置: {model_config.get('config', {})}")
 
                 # 创建 SherpaOnnxASR 实例
                 try:
@@ -503,12 +549,21 @@ class ASRModelManager:
                 self.model_type = current_engine_type
                 sherpa_logger.info(f"模型类型已从 {old_model_type} 更新为: {self.model_type}")
 
+            # 发射模型加载完成信号
+            sherpa_logger.info("发射模型加载完成信号")
+            self.model_loaded.emit(True)
+
             return True
 
         except Exception as e:
             sherpa_logger.error(f"初始化 {engine_type} 引擎错误: {str(e)}")
             import traceback
             sherpa_logger.error(traceback.format_exc())
+
+            # 发射模型加载失败信号
+            sherpa_logger.info("发射模型加载失败信号")
+            self.model_loaded.emit(False)
+
             return False
 
     def transcribe(self, audio_data: Union[bytes, np.ndarray]) -> Optional[str]:
@@ -580,7 +635,7 @@ class ASRModelManager:
         sherpa_logger.info(f"当前引擎类型: {engine_type}")
 
         # 检查模型类型和引擎类型是否一致
-        if self.model_type != engine_type:
+        if self.model_type and engine_type and self.model_type != engine_type:
             sherpa_logger.warning(f"模型类型 {self.model_type} 与引擎类型 {engine_type} 不一致")
 
             # 尝试重新初始化引擎
@@ -599,15 +654,59 @@ class ASRModelManager:
         # 检查当前引擎是否支持文件转录
         if not hasattr(self.current_engine, 'transcribe_file'):
             sherpa_logger.error(f"当前引擎 {engine_type} 不支持文件转录")
-            return None
+
+            # 尝试切换到支持文件转录的引擎
+            sherpa_logger.info("尝试切换到支持文件转录的引擎")
+
+            # 优先尝试 sherpa_0626 引擎
+            if self.initialize_engine('sherpa_0626'):
+                sherpa_logger.info("成功切换到 sherpa_0626 引擎")
+            # 然后尝试 sherpa_std 引擎
+            elif self.initialize_engine('sherpa_std'):
+                sherpa_logger.info("成功切换到 sherpa_std 引擎")
+            # 最后尝试 vosk 引擎
+            elif self.initialize_engine('vosk'):
+                sherpa_logger.info("成功切换到 vosk 引擎")
+            else:
+                sherpa_logger.error("无法切换到支持文件转录的引擎")
+                return None
+
+            # 再次检查引擎是否支持文件转录
+            if not hasattr(self.current_engine, 'transcribe_file'):
+                sherpa_logger.error("切换后的引擎仍不支持文件转录")
+                return None
+
+            # 更新引擎类型
+            engine_type = self.get_current_engine_type()
+            sherpa_logger.info(f"切换后的引擎类型: {engine_type}")
 
         try:
+            # 记录详细的引擎信息
             sherpa_logger.info(f"调用引擎的 transcribe_file 方法")
             sherpa_logger.info(f"使用引擎: {type(self.current_engine).__name__}")
             sherpa_logger.info(f"引擎类型: {engine_type}")
+
+            # 检查文件是否存在
+            import os
+            if not os.path.exists(file_path):
+                sherpa_logger.error(f"文件不存在: {file_path}")
+                return None
+
+            # 检查文件大小
+            file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
+            sherpa_logger.info(f"文件大小: {file_size:.2f} MB")
+
+            # 调用引擎的 transcribe_file 方法
             result = self.current_engine.transcribe_file(file_path)
-            sherpa_logger.info(f"转录结果: {result[:100]}..." if result and len(result) > 100 else f"转录结果: {result}")
-            return True
+
+            # 记录转录结果
+            if result:
+                result_preview = result[:100] + "..." if len(result) > 100 else result
+                sherpa_logger.info(f"转录结果: {result_preview}")
+            else:
+                sherpa_logger.warning("转录结果为空")
+
+            return result
         except Exception as e:
             sherpa_logger.error(f"文件转录错误: {str(e)}")
             import traceback
@@ -652,54 +751,131 @@ class ASRModelManager:
         sherpa_logger.debug(f"self.current_engine = {self.current_engine}")
         sherpa_logger.debug(f"self.model_type = {self.model_type}")
 
+        # 如果已经有明确设置的model_type，优先使用它
+        if self.model_type and self.current_engine:
+            sherpa_logger.debug(f"使用已设置的模型类型: {self.model_type}")
+
+            # 验证当前引擎是否与model_type匹配
+            is_match = False
+
+            # 检查VoskASR
+            if self.model_type == "vosk" and isinstance(self.current_engine, VoskASR):
+                is_match = True
+
+            # 检查SherpaOnnxASR
+            elif isinstance(self.current_engine, SherpaOnnxASR):
+                # 检查是否是0626模型
+                if "0626" in self.model_type:
+                    model_dir = getattr(self.current_engine, 'model_dir', '')
+                    if "0626" in model_dir or "2023-06-26" in model_dir:
+                        # 检查是否是int8模型
+                        if "int8" in self.model_type and hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8:
+                            is_match = True
+                        elif "int8" not in self.model_type and (not hasattr(self.current_engine, 'is_int8') or not self.current_engine.is_int8):
+                            is_match = True
+                # 检查是否是普通Sherpa模型
+                else:
+                    # 检查是否是int8模型
+                    if "int8" in self.model_type and hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8:
+                        is_match = True
+                    elif "std" in self.model_type and (not hasattr(self.current_engine, 'is_int8') or not self.current_engine.is_int8):
+                        is_match = True
+
+            if is_match:
+                sherpa_logger.debug(f"当前引擎与模型类型 {self.model_type} 匹配")
+                return self.model_type
+            else:
+                sherpa_logger.warning(f"当前引擎与模型类型 {self.model_type} 不匹配，需要重新推断")
+
+        # 如果没有model_type或者不匹配，根据current_engine推断
+        engine_type = None
+
         # 首先根据 current_engine 的类型推断
         if isinstance(self.current_engine, VoskASR):
             sherpa_logger.debug("当前引擎是 VoskASR")
             engine_type = "vosk"
         elif isinstance(self.current_engine, SherpaOnnxASR):
             sherpa_logger.debug("当前引擎是 SherpaOnnxASR")
+
+            # 记录引擎的详细信息，帮助调试
+            sherpa_logger.debug(f"引擎属性:")
+            if hasattr(self.current_engine, 'model_dir'):
+                sherpa_logger.debug(f"  model_dir: {self.current_engine.model_dir}")
+            if hasattr(self.current_engine, 'model_config'):
+                sherpa_logger.debug(f"  model_config: {self.current_engine.model_config}")
+            if hasattr(self.current_engine, 'is_int8'):
+                sherpa_logger.debug(f"  is_int8: {self.current_engine.is_int8}")
+
             # 尝试从引擎实例获取更具体的类型
             if hasattr(self.current_engine, 'model_config') and self.current_engine.model_config:
+                model_config = self.current_engine.model_config
+                sherpa_logger.debug(f"使用model_config确定引擎类型: {model_config}")
+
                 # 检查是否是0626模型
-                if hasattr(self.current_engine, 'model_config') and self.current_engine.model_config.get("name") == "0626":
-                    if self.current_engine.model_config.get("type") == "int8":
+                if model_config.get("name") == "0626":
+                    sherpa_logger.debug("检测到0626模型")
+                    # 检查模型目录名称是否包含0626或2023-06-26
+                    model_dir = getattr(self.current_engine, 'model_dir', '')
+                    if "0626" in model_dir or "2023-06-26" in model_dir:
+                        sherpa_logger.debug(f"模型目录确认为0626: {model_dir}")
+
+                    # 根据类型确定具体的引擎类型
+                    if model_config.get("type") == "int8":
                         engine_type = "sherpa_0626_int8"
-                    elif self.current_engine.model_config.get("type") == "standard":
-                        engine_type = "sherpa_0626_std"
+                    else:
+                        engine_type = "sherpa_0626"  # 使用简化名称，与config.json一致
+
                     sherpa_logger.debug(f"当前引擎是 SherpaOnnxASR ({engine_type})")
-                elif hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8:
-                    engine_type = "sherpa_int8"
-                    sherpa_logger.debug("当前引擎是 SherpaOnnxASR (int8)")
                 else:
-                    engine_type = "sherpa_std"
-                    sherpa_logger.debug("当前引擎是 SherpaOnnxASR (std)")
+                    # 非0626模型
+                    if model_config.get("type") == "int8":
+                        engine_type = "sherpa_int8"
+                    else:
+                        engine_type = "sherpa_std"
+                    sherpa_logger.debug(f"当前引擎是 SherpaOnnxASR ({engine_type})")
             else:
                 # 如果没有model_config，使用默认逻辑
-                if hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8:
-                    engine_type = "sherpa_int8"
-                    sherpa_logger.debug("当前引擎是 SherpaOnnxASR (int8)")
+                sherpa_logger.debug("没有model_config，使用默认逻辑")
+
+                # 检查模型目录名称是否包含0626或2023-06-26
+                model_dir = getattr(self.current_engine, 'model_dir', '')
+                if "0626" in model_dir or "2023-06-26" in model_dir:
+                    sherpa_logger.debug(f"从模型目录检测到0626模型: {model_dir}")
+                    # 根据is_int8确定具体的引擎类型
+                    if hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8:
+                        engine_type = "sherpa_0626_int8"
+                    else:
+                        engine_type = "sherpa_0626"
                 else:
-                    engine_type = "sherpa_std"
-                    sherpa_logger.debug("当前引擎是 SherpaOnnxASR (std)")
+                    # 非0626模型
+                    if hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8:
+                        engine_type = "sherpa_int8"
+                    else:
+                        engine_type = "sherpa_std"
+
+                sherpa_logger.debug(f"当前引擎是 SherpaOnnxASR ({engine_type})")
         else:
             sherpa_logger.debug("未识别的引擎类型")
             engine_type = None
 
-        # 检查 model_type 和推断的引擎类型是否一致
+        # 如果推断出了引擎类型，但与当前model_type不一致，记录警告但不自动更新
         if self.model_type and engine_type and self.model_type != engine_type:
             sherpa_logger.warning(f"模型类型 {self.model_type} 与推断的引擎类型 {engine_type} 不一致")
-            # 更新 model_type 为推断的引擎类型
-            old_model_type = self.model_type
-            self.model_type = engine_type
-            sherpa_logger.info(f"模型类型已从 {old_model_type} 更新为: {self.model_type}")
+            sherpa_logger.warning(f"保持当前模型类型: {self.model_type}，但可能导致功能异常")
+            # 返回推断的引擎类型，而不是model_type
+            return engine_type
         elif not self.model_type and engine_type:
-            # 如果 model_type 为空但能推断出引擎类型，则更新 model_type
+            # 如果model_type为空但能推断出引擎类型，则更新model_type
             self.model_type = engine_type
             sherpa_logger.info(f"模型类型已设置为: {self.model_type}")
+            return engine_type
 
         # 返回最终的引擎类型
-        if self.model_type:
-            sherpa_logger.debug(f"返回引擎类型: {self.model_type}")
+        if engine_type:
+            sherpa_logger.debug(f"返回引擎类型: {engine_type}")
+            return engine_type
+        elif self.model_type:
+            sherpa_logger.debug(f"返回模型类型: {self.model_type}")
             return self.model_type
 
         sherpa_logger.debug("无法确定引擎类型")
@@ -748,3 +924,157 @@ class ASRModelManager:
             engines["sherpa_0626_std"] = False
 
         return engines
+
+    def get_audio_devices(self) -> List[Dict[str, Any]]:
+        """获取可用的音频设备列表
+
+        Returns:
+            List[Dict[str, Any]]: 音频设备列表
+        """
+        try:
+            # 使用 soundcard 库获取音频设备
+            try:
+                import soundcard as sc
+            except ImportError:
+                logger.error("未安装 soundcard 模块，无法获取音频设备列表")
+                return []
+
+            # 获取所有扬声器（输出设备）
+            speakers = sc.all_speakers()
+
+            # 获取所有麦克风（输入设备）
+            microphones = sc.all_microphones(include_loopback=True)
+
+            # 合并设备列表
+            devices = []
+
+            # 添加扬声器
+            for i, speaker in enumerate(speakers):
+                devices.append({
+                    'index': f"speaker_{i}",
+                    'id': speaker.id,
+                    'name': f"[输出] {speaker.name}",
+                    'channels': 2,  # 假设立体声
+                    'sample_rate': 44100,  # 假设标准采样率
+                    'is_input': False
+                })
+
+            # 添加麦克风
+            for i, mic in enumerate(microphones):
+                devices.append({
+                    'index': f"mic_{i}",
+                    'id': mic.id,
+                    'name': f"[输入] {mic.name}",
+                    'channels': 1,  # 假设单声道
+                    'sample_rate': 44100,  # 假设标准采样率
+                    'is_input': True
+                })
+
+            logger.info(f"找到 {len(devices)} 个音频设备")
+            return devices
+
+        except Exception as e:
+            logger.error(f"获取音频设备列表失败: {str(e)}")
+            logger.error(traceback.format_exc())
+            return []
+
+    def set_audio_device(self, device: Dict[str, Any]) -> bool:
+        """设置音频设备
+
+        Args:
+            device: 音频设备信息
+
+        Returns:
+            bool: 是否设置成功
+        """
+        try:
+            if not device:
+                logger.error("音频设备为空")
+                self.error_occurred.emit("音频设备为空")
+                return False
+
+            logger.info(f"设置音频设备: {device.get('name', '未知设备')}")
+            self.current_device = device
+
+            # 更新状态
+            self.signals.status_updated.emit(f"已选择设备: {device.get('name', '未知设备')}")
+
+            return True
+        except Exception as e:
+            error_msg = f"设置音频设备失败: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            self.error_occurred.emit(error_msg)
+            return False
+
+    def start_recognition(self) -> bool:
+        """开始识别
+
+        Returns:
+            bool: 是否成功启动识别
+        """
+        try:
+            # 检查引擎是否已初始化
+            if not self.current_engine:
+                logger.error("ASR引擎未初始化")
+                self.error_occurred.emit("ASR引擎未初始化，请先加载模型")
+                return False
+
+            # 检查设备是否已设置
+            if not self.current_device:
+                logger.error("未设置音频设备")
+                self.error_occurred.emit("未设置音频设备，请先选择音频设备")
+                return False
+
+            # 检查是否已经在识别
+            if self.is_recognizing:
+                logger.warning("识别已经在进行中")
+                return True
+
+            # 开始识别
+            logger.info("开始识别")
+            self.is_recognizing = True
+
+            # 发射识别开始信号
+            self.recognition_started.emit()
+
+            # 更新状态
+            self.signals.status_updated.emit("识别已开始")
+
+            return True
+        except Exception as e:
+            error_msg = f"启动识别失败: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            self.error_occurred.emit(error_msg)
+            return False
+
+    def stop_recognition(self) -> bool:
+        """停止识别
+
+        Returns:
+            bool: 是否成功停止识别
+        """
+        try:
+            # 检查是否正在识别
+            if not self.is_recognizing:
+                logger.warning("识别未在进行中")
+                return True
+
+            # 停止识别
+            logger.info("停止识别")
+            self.is_recognizing = False
+
+            # 发射识别停止信号
+            self.recognition_stopped.emit()
+
+            # 更新状态
+            self.signals.status_updated.emit("识别已停止")
+
+            return True
+        except Exception as e:
+            error_msg = f"停止识别失败: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            self.error_occurred.emit(error_msg)
+            return False

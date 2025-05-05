@@ -23,7 +23,8 @@ class ConfigManager:
     def __init__(self):
         if self._config is None:
             self._config = self.load_config()
-            if not self.validate_config():
+            # 验证配置
+            if not self.validate_config(self._config):
                 raise ValueError("配置验证失败")
 
     @property
@@ -36,18 +37,18 @@ class ConfigManager:
         try:
             config_path = os.path.join('config', 'config.json')
             logger.debug(f"尝试加载配置文件: {config_path}")
-            
+
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                
+
             logger.info("配置文件加载成功")
-            
+
             # 验证配置
             if not self.validate_config(config):
                 raise ValueError("配置验证失败")
-                
+
             return config
-            
+
         except FileNotFoundError:
             logger.error(f"配置文件不存在: {config_path}")
             raise
@@ -99,17 +100,17 @@ class ConfigManager:
             "joiner-epoch-99-avg-1-chunk-16-left-128.onnx",
             "tokens.txt"
         ]
-        
+
         try:
             for file in required_files:
                 file_path = os.path.join(model_path, file)
                 if not os.path.exists(file_path):
                     logger.error(f"缺少模型文件: {file_path}")
                     return False
-                    
+
             logger.info("模型文件验证通过")
             return True
-            
+
         except Exception as e:
             logger.error(f"验证模型文件时发生错误: {str(e)}")
             return False
@@ -126,7 +127,7 @@ class ConfigManager:
             'asr.models',
             'window'
         ]
-        
+
         try:
             for key in required_keys:
                 parts = key.split('.')
@@ -151,13 +152,13 @@ def load_config() -> Dict[str, Any]:
         config_path = 'config/config.json'
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-            
+
         # 验证配置
         if not config_manager.validate_config(config):
             raise ValueError("配置验证失败")
-            
+
         return config
-        
+
     except Exception as e:
         logger.error(f"加载配置失败: {e}")
         raise
