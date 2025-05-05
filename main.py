@@ -173,7 +173,9 @@ class MainWindow(QMainWindow):
         self.device_combo.clear()
         devices = self.asr_manager.get_audio_devices()
         for device in devices:
-            self.device_combo.addItem(device.name, device)
+            # 兼容字典和对象类型
+            device_name = device.get('name', '未知设备') if isinstance(device, dict) else getattr(device, 'name', '未知设备')
+            self.device_combo.addItem(device_name, device)
     
     def start_recognition(self):
         """开始识别"""

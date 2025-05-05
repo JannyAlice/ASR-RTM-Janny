@@ -28,12 +28,12 @@
         }
     },
     "transcription": {
-        "default_model": "sherpa_0626"
+        "default_model": "sherpa_0626_std"
     },
     "asr": {
         "models": {
-            "vosk": {
-                "path": "C:\\Users\\crige\\RealtimeTrans\\vosk-api\\models\\asr\\vosk\\vosk-model-small-en-us-0.15",
+            "vosk_small": {
+                "path": "models/asr/vosk/vosk-model-small-en-us-0.15",
                 "type": "standard",
                 "enabled": true,
                 "config": {
@@ -43,8 +43,8 @@
                     "buffer_size": 4000
                 }
             },
-            "sherpa_int8": {
-                "path": "C:\\Users\\crige\\RealtimeTrans\\vosk-api\\models\\asr\\sherpa-onnx",
+            "sherpa_onnx_int8": {
+                "path": "models/asr/sherpa-onnx",
                 "type": "int8",
                 "enabled": true,
                 "config": {
@@ -59,8 +59,8 @@
                     "debug": false
                 }
             },
-            "sherpa_std": {
-                "path": "C:\\Users\\crige\\RealtimeTrans\\vosk-api\\models\\asr\\sherpa-onnx",
+            "sherpa_onnx_std": {
+                "path": "models/asr/sherpa-onnx",
                 "type": "standard",
                 "enabled": true,
                 "config": {
@@ -75,7 +75,23 @@
                     "debug": false
                 }
             },
-            "sherpa_0626": {
+            "sherpa_0626_int8": {
+                "path": "models/asr/sherpa-onnx-streaming-zipformer-en-2023-06-26",
+                "type": "int8",
+                "enabled": true,
+                "config": {
+                    "encoder": "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+                    "decoder": "decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+                    "joiner": "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+                    "tokens": "tokens.txt",
+                    "num_threads": 4,
+                    "sample_rate": 16000,
+                    "feature_dim": 80,
+                    "decoding_method": "greedy_search",
+                    "debug": false
+                }
+            },
+            "sherpa_0626_std": {
                 "path": "models/asr/sherpa-onnx-streaming-zipformer-en-2023-06-26",
                 "type": "standard",
                 "enabled": true,
@@ -91,7 +107,7 @@
                     "debug": false
                 }
             },
-            "opus_mt": {
+            "opus": {
                 "path": "models/translation/opus-mt/en-zh",
                 "type": "translation",
                 "enabled": true,

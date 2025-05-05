@@ -21,7 +21,7 @@ class ModelMenu(QMenu):
         self._create_actions()
 
         # 设置默认选中项
-        self.actions['vosk'].setChecked(True)
+        self.actions['vosk_small'].setChecked(True)
         self.actions['argos'].setChecked(True)
 
     def _create_actions(self):
@@ -36,23 +36,23 @@ class ModelMenu(QMenu):
         self.asr_group = QActionGroup(self.parent())
 
         # 创庯ASR模型选择动作
-        self.actions['vosk'] = QAction("VOSK Small 模型", self.parent(), checkable=True)
-        self.actions['sherpa_int8'] = QAction("Sherpa-ONNX int8量化模型", self.parent(), checkable=True)
-        self.actions['sherpa_std'] = QAction("Sherpa-ONNX 标准模型", self.parent(), checkable=True)
+        self.actions['vosk_small'] = QAction("VOSK Small 模型", self.parent(), checkable=True)
+        self.actions['sherpa_onnx_int8'] = QAction("Sherpa-ONNX int8量化模型", self.parent(), checkable=True)
+        self.actions['sherpa_onnx_std'] = QAction("Sherpa-ONNX 标准模型", self.parent(), checkable=True)
         self.actions['sherpa_0626_int8'] = QAction("Sherpa-ONNX 2023-06-26 int8 模型", self.parent(), checkable=True)
         self.actions['sherpa_0626_std'] = QAction("Sherpa-ONNX 2023-06-26 标准模型", self.parent(), checkable=True)
 
         # 将动作添加到组
-        self.asr_group.addAction(self.actions['vosk'])
-        self.asr_group.addAction(self.actions['sherpa_int8'])
-        self.asr_group.addAction(self.actions['sherpa_std'])
+        self.asr_group.addAction(self.actions['vosk_small'])
+        self.asr_group.addAction(self.actions['sherpa_onnx_int8'])
+        self.asr_group.addAction(self.actions['sherpa_onnx_std'])
         self.asr_group.addAction(self.actions['sherpa_0626_int8'])
         self.asr_group.addAction(self.actions['sherpa_0626_std'])
 
         # 将动作添加到ASR子菜单
-        self.asr_menu.addAction(self.actions['vosk'])
-        self.asr_menu.addAction(self.actions['sherpa_int8'])
-        self.asr_menu.addAction(self.actions['sherpa_std'])
+        self.asr_menu.addAction(self.actions['vosk_small'])
+        self.asr_menu.addAction(self.actions['sherpa_onnx_int8'])
+        self.asr_menu.addAction(self.actions['sherpa_onnx_std'])
         self.asr_menu.addAction(self.actions['sherpa_0626_int8'])
         self.asr_menu.addAction(self.actions['sherpa_0626_std'])
 
@@ -83,14 +83,14 @@ class ModelMenu(QMenu):
             main_window: 主窗口实例
         """
         # ASR模型选择信号
-        self.actions['vosk'].triggered.connect(
-            lambda: main_window.set_asr_model("vosk")
+        self.actions['vosk_small'].triggered.connect(
+            lambda: main_window.set_asr_model("vosk_small")
         )
-        self.actions['sherpa_int8'].triggered.connect(
-            lambda: main_window.set_asr_model("sherpa_int8")
+        self.actions['sherpa_onnx_int8'].triggered.connect(
+            lambda: main_window.set_asr_model("sherpa_onnx_int8")
         )
-        self.actions['sherpa_std'].triggered.connect(
-            lambda: main_window.set_asr_model("sherpa_std")
+        self.actions['sherpa_onnx_std'].triggered.connect(
+            lambda: main_window.set_asr_model("sherpa_onnx_std")
         )
         self.actions['sherpa_0626_int8'].triggered.connect(
             lambda: main_window.set_asr_model("sherpa_0626_int8")
