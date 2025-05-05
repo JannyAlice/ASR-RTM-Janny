@@ -154,6 +154,16 @@ class ASRModelManager(QObject):
 
             # 更新当前模型信息
             self.current_model_type = model_name
+            self.model_type = model_name  # 确保model_type与current_model_type一致
+
+            # 初始化引擎
+            if not self.initialize_engine(model_name):
+                logger.error(f"初始化引擎失败: {model_name}")
+                return False
+
+            # 设置current_model为True，表示模型已加载
+            self.current_model = True
+
             logger.info(f"模型加载成功: {model_name}")
 
             # 发射模型加载成功信号
@@ -348,21 +358,67 @@ class ASRModelManager(QObject):
             Optional[Any]: 识别器实例
         """
         try:
+            # 导入 Sherpa-ONNX 日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
             # 检查当前模型是否已加载
             if self.current_model is None:
                 logger.error("当前模型未加载，请先加载模型")
+                sherpa_logger.error("当前模型未加载，请先加载模型")
                 return None
 
             # 检查模型配置
             model_config = self.models_config.get(self.model_type, {})
             if not model_config:
                 logger.error(f"模型配置 {self.model_type} 不存在")
+                sherpa_logger.error(f"模型配置 {self.model_type} 不存在")
                 return None
 
             # 检查模型路径
             model_path = model_config.get('path', '')
             if not os.path.exists(model_path):
                 logger.error(f"模型路径不存在: {model_path}")
+                sherpa_logger.error(f"模型路径不存在: {model_path}")
+                return None
+
+            # 获取当前引擎类型
+            engine_type = self.get_current_engine_type()
+            sherpa_logger.info(f"创建识别器，当前引擎类型: {engine_type}")
+
+            # 检查当前引擎是否已初始化
+            if not self.current_engine:
+                sherpa_logger.error("当前引擎未初始化，尝试初始化...")
+                if not self.initialize_engine(self.model_type):
+                    sherpa_logger.error(f"初始化引擎 {self.model_type} 失败")
+                    return None
+                sherpa_logger.info("引擎初始化成功")
+
+            # 根据引擎类型创建识别器
+            if engine_type == "vosk":
+                # 对于Vosk模型，返回VoskRecognizer实例
+                sherpa_logger.info("创建Vosk识别器")
+                model = vosk.Model(model_path)
+                recognizer = vosk.KaldiRecognizer(model, 16000)
+                recognizer.engine_type = "vosk"  # 添加引擎类型标记
+                sherpa_logger.info("Vosk识别器创建成功")
+                return recognizer
+            elif engine_type and engine_type.startswith("sherpa"):
+                # 对于Sherpa-ONNX模型，返回当前引擎实例
+                sherpa_logger.info(f"返回当前Sherpa-ONNX引擎实例: {type(self.current_engine).__name__}")
+                # 为引擎添加引擎类型标记
+                self.current_engine.engine_type = engine_type
+                return self.current_engine
+            else:
+                sherpa_logger.error(f"不支持的引擎类型: {engine_type}")
                 return None
 
         except Exception as e:
@@ -371,7 +427,16 @@ class ASRModelManager(QObject):
             logger.error(f"模型类型: {self.model_type}")
             logger.error(f"模型配置: {self.models_config.get(self.model_type, {})}")
             import traceback
-            logger.error(f"错误堆栈:\n{traceback.format_exc()}")
+            error_trace = traceback.format_exc()
+            logger.error(f"错误堆栈:\n{error_trace}")
+
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+                sherpa_logger.error(f"创建识别器时发生错误: {str(e)}")
+                sherpa_logger.error(error_trace)
+            except:
+                pass
+
             return None
 
     def check_model_directory(self) -> Dict[str, bool]:

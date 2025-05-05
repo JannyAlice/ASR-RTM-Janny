@@ -768,10 +768,160 @@ class SherpaOnnxASR:
             print(error_trace)
             return None
 
+    def AcceptWaveform(self, audio_data: np.ndarray) -> bool:
+        """
+        接受音频数据并进行处理（兼容Vosk API）
+
+        Args:
+            audio_data: 音频数据，numpy数组
+
+        Returns:
+            bool: 是否有完整的识别结果
+        """
+        try:
+            # 获取日志记录器
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
+            # 检查识别器是否已初始化
+            if not self.recognizer:
+                sherpa_logger.error("识别器未初始化")
+                return False
+
+            # 创建新的流
+            if not hasattr(self, 'current_stream') or self.current_stream is None:
+                try:
+                    self.current_stream = self.recognizer.create_stream()
+                    sherpa_logger.debug("创建新的流")
+                except Exception as e:
+                    sherpa_logger.error(f"创建流错误: {e}")
+                    return False
+
+            # 确保音频数据是numpy数组
+            if isinstance(audio_data, bytes):
+                # 将字节转换为16位整数数组
+                import array
+                audio_array = array.array('h', audio_data)
+                audio_data = np.array(audio_array, dtype=np.float32) / 32768.0
+                sherpa_logger.debug(f"将字节数据转换为numpy数组，长度: {len(audio_data)}")
+
+            # 确保音频数据是单声道
+            if len(audio_data.shape) > 1:
+                audio_data = np.mean(audio_data, axis=1)
+                sherpa_logger.debug(f"将多声道数据转换为单声道，形状: {audio_data.shape}")
+
+            # 处理音频数据
+            try:
+                self.current_stream.accept_waveform(self.sample_rate, audio_data)
+                sherpa_logger.debug(f"接受音频数据，长度: {len(audio_data)}")
+            except Exception as e:
+                sherpa_logger.error(f"接受音频数据错误: {e}")
+                import traceback
+                sherpa_logger.error(traceback.format_exc())
+                return False
+
+            # 检查是否有完整的识别结果
+            # 这里我们使用一个简单的启发式方法：如果当前流中有文本，则认为有完整的结果
+            try:
+                # 解码
+                while self.recognizer.is_ready(self.current_stream):
+                    self.recognizer.decode_stream(self.current_stream)
+
+                # 获取当前结果
+                result = self.recognizer.get_result(self.current_stream)
+                has_result = bool(result and result.strip())
+                sherpa_logger.debug(f"当前结果: {result}, 是否有结果: {has_result}")
+
+                return has_result
+            except Exception as e:
+                sherpa_logger.error(f"检查结果错误: {e}")
+                import traceback
+                sherpa_logger.error(traceback.format_exc())
+                return False
+
+        except Exception as e:
+            print(f"AcceptWaveform 错误: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return False
+
+    def Result(self) -> str:
+        """
+        获取当前识别结果（兼容Vosk API）
+
+        Returns:
+            str: 当前识别结果
+        """
+        try:
+            # 检查识别器和流是否已初始化
+            if not self.recognizer or not hasattr(self, 'current_stream') or self.current_stream is None:
+                return ""
+
+            # 解码
+            while self.recognizer.is_ready(self.current_stream):
+                self.recognizer.decode_stream(self.current_stream)
+
+            # 获取结果
+            result = self.recognizer.get_result(self.current_stream)
+
+            # 重置流
+            self.current_stream = self.recognizer.create_stream()
+
+            # 处理结果
+            if result:
+                # 使用正则表达式处理结果，确保每个句子以句号结尾
+                import re
+                result = re.sub(r'(?<=[a-zA-Z0-9])(?=[A-Z])', '. ', result)
+                result = re.sub(r'\s+$', '', result)  # 去除末尾空格
+                if not result.endswith('.'):
+                    result += '.'  # 确保结果以句号结尾
+
+            return result if result else ""
+        except Exception as e:
+            print(f"Result 错误: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return ""
+
+    def PartialResult(self) -> str:
+        """
+        获取部分识别结果（兼容Vosk API）
+
+        Returns:
+            str: 部分识别结果
+        """
+        try:
+            # 检查识别器和流是否已初始化
+            if not self.recognizer or not hasattr(self, 'current_stream') or self.current_stream is None:
+                return ""
+
+            # 解码
+            while self.recognizer.is_ready(self.current_stream):
+                self.recognizer.decode_stream(self.current_stream)
+
+            # 获取部分结果
+            result = self.recognizer.get_result(self.current_stream)
+
+            return result if result else ""
+        except Exception as e:
+            print(f"PartialResult 错误: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return ""
+
     def __del__(self):
         """清理资源"""
         self.recognizer = None
         self.stream = None
+        if hasattr(self, 'current_stream'):
+            self.current_stream = None
 
     def on_sentence_done(self, text: str) -> None:
         """

@@ -40,51 +40,106 @@ class FileTranscriber:
         Returns:
             bool: 开始转录是否成功
         """
-        if self.is_transcribing:
-            return False
-
-        if not os.path.exists(file_path):
-            self.signals.error_occurred.emit(f"文件不存在: {file_path}")
-            return False
-
-        # 设置转录标志
-        self.is_transcribing = True
-
-        # 获取文件信息
         try:
-            # 获取文件大小
-            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，使用简单的日志记录
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
 
-            # 获取文件时长
-            probe = subprocess.run([
-                'ffprobe',
-                '-v', 'quiet',
-                '-print_format', 'json',
-                '-show_format',
-                file_path
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            sherpa_logger.info(f"开始文件转录: {file_path}")
 
-            probe_data = json.loads(probe.stdout)
-            duration = float(probe_data['format']['duration'])
+            # 检查是否已经在转录
+            if self.is_transcribing:
+                sherpa_logger.warning("已经在转录中，无法启动新的转录")
+                return False
 
-            self.signals.status_updated.emit(
-                f"文件信息: {os.path.basename(file_path)} ({file_size_mb:.2f}MB, {duration:.2f}秒)"
-            )
+            # 检查文件是否存在
+            if not os.path.exists(file_path):
+                error_msg = f"文件不存在: {file_path}"
+                sherpa_logger.error(error_msg)
+                self.signals.error_occurred.emit(error_msg)
+                return False
 
-            # 创建转录线程
-            self.transcription_thread = threading.Thread(
-                target=self._transcribe_file_thread,
-                args=(file_path, recognizer, duration),
-                daemon=True
-            )
+            # 设置转录标志
+            self.is_transcribing = True
 
-            # 启动线程
-            self.transcription_thread.start()
+            # 发送转录开始信号
+            if hasattr(self.signals, 'transcription_started'):
+                sherpa_logger.debug("发送转录开始信号")
+                self.signals.transcription_started.emit()
 
-            return True
+            # 获取文件信息
+            try:
+                # 获取文件大小
+                file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                sherpa_logger.info(f"文件大小: {file_size_mb:.2f}MB")
+
+                # 获取文件时长
+                probe = subprocess.run([
+                    'ffprobe',
+                    '-v', 'quiet',
+                    '-print_format', 'json',
+                    '-show_format',
+                    file_path
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+                probe_data = json.loads(probe.stdout)
+                duration = float(probe_data['format']['duration'])
+                sherpa_logger.info(f"文件时长: {duration:.2f}秒")
+
+                # 更新状态
+                status_msg = f"文件信息: {os.path.basename(file_path)} ({file_size_mb:.2f}MB, {duration:.2f}秒)"
+                sherpa_logger.info(status_msg)
+                self.signals.status_updated.emit(status_msg)
+
+                # 创建转录线程
+                sherpa_logger.debug("创建转录线程")
+                self.transcription_thread = threading.Thread(
+                    target=self._transcribe_file_thread,
+                    args=(file_path, recognizer, duration),
+                    daemon=True
+                )
+
+                # 启动线程
+                sherpa_logger.debug("启动转录线程")
+                self.transcription_thread.start()
+
+                return True
+
+            except Exception as e:
+                error_msg = f"获取文件信息错误: {e}"
+                sherpa_logger.error(error_msg)
+                import traceback
+                sherpa_logger.error(traceback.format_exc())
+                self.signals.error_occurred.emit(error_msg)
+                self.is_transcribing = False
+
+                # 发送转录完成信号（因为出错）
+                if hasattr(self.signals, 'transcription_finished'):
+                    sherpa_logger.debug("发送转录完成信号（因为出错）")
+                    self.signals.transcription_finished.emit()
+
+                return False
 
         except Exception as e:
-            self.signals.error_occurred.emit(f"获取文件信息错误: {e}")
+            print(f"启动文件转录错误: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # 尝试发送错误信号
+            try:
+                self.signals.error_occurred.emit(f"启动文件转录错误: {e}")
+            except:
+                pass
+
+            # 重置转录标志
             self.is_transcribing = False
             return False
 
@@ -95,34 +150,82 @@ class FileTranscriber:
         Returns:
             bool: 停止转录是否成功
         """
-        if not self.is_transcribing:
-            return False
-
-        # 清除转录标志
-        self.is_transcribing = False
-
-        # 终止ffmpeg进程
-        if self.ffmpeg_process:
+        try:
+            # 导入日志工具
             try:
-                self.ffmpeg_process.terminate()
-                self.ffmpeg_process.wait(timeout=1.0)
-            except:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，使用简单的日志记录
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
+            sherpa_logger.info("停止文件转录")
+
+            # 检查是否正在转录
+            if not self.is_transcribing:
+                sherpa_logger.warning("没有正在进行的转录，无法停止")
+                return False
+
+            # 清除转录标志
+            self.is_transcribing = False
+            sherpa_logger.debug("转录标志已清除")
+
+            # 终止ffmpeg进程
+            if self.ffmpeg_process:
+                sherpa_logger.debug("终止ffmpeg进程")
                 try:
-                    self.ffmpeg_process.kill()
+                    self.ffmpeg_process.terminate()
+                    self.ffmpeg_process.wait(timeout=1.0)
+                    sherpa_logger.debug("ffmpeg进程已正常终止")
                 except:
-                    pass
-            self.ffmpeg_process = None
+                    try:
+                        sherpa_logger.warning("ffmpeg进程终止超时，强制结束")
+                        self.ffmpeg_process.kill()
+                    except Exception as e:
+                        sherpa_logger.error(f"强制结束ffmpeg进程失败: {e}")
+                self.ffmpeg_process = None
 
-        # 等待线程结束
-        if self.transcription_thread and self.transcription_thread.is_alive():
-            self.transcription_thread.join(timeout=1.0)
+            # 等待线程结束
+            if self.transcription_thread and self.transcription_thread.is_alive():
+                sherpa_logger.debug("等待转录线程结束")
+                self.transcription_thread.join(timeout=1.0)
+                if self.transcription_thread.is_alive():
+                    sherpa_logger.warning("转录线程未在超时时间内结束")
+                else:
+                    sherpa_logger.debug("转录线程已结束")
 
-        self.transcription_thread = None
+            self.transcription_thread = None
 
-        # 清理临时文件
-        self._cleanup_temp_files()
+            # 清理临时文件
+            sherpa_logger.debug("清理临时文件")
+            self._cleanup_temp_files()
 
-        return True
+            # 发送转录完成信号
+            if hasattr(self.signals, 'transcription_finished'):
+                sherpa_logger.debug("发送转录完成信号")
+                self.signals.transcription_finished.emit()
+
+            sherpa_logger.info("文件转录已停止")
+            return True
+
+        except Exception as e:
+            print(f"停止文件转录错误: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # 尝试发送错误信号
+            try:
+                self.signals.error_occurred.emit(f"停止文件转录错误: {e}")
+            except:
+                pass
+
+            # 确保转录标志被清除
+            self.is_transcribing = False
+            return False
 
     def _transcribe_file_thread(self, file_path: str, recognizer: Any, duration: float) -> None:
         """
@@ -134,27 +237,59 @@ class FileTranscriber:
             duration: 文件时长(秒)
         """
         try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，使用简单的日志记录
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
+            sherpa_logger.info(f"文件转录线程开始: {file_path}")
+
             # 检查是否是 ASRModelManager 实例
             if hasattr(recognizer, 'transcribe_file'):
+                sherpa_logger.info("使用 ASRModelManager 的 transcribe_file 方法")
                 # 使用 ASRModelManager 的 transcribe_file 方法
                 self._transcribe_file_with_manager(file_path, recognizer, duration)
             else:
+                sherpa_logger.info("使用传统的 Vosk 方法")
                 # 使用传统的 Vosk 方法
                 self._transcribe_file_with_vosk(file_path, recognizer, duration)
 
         except Exception as e:
-            self.signals.error_occurred.emit(f"转录过程错误: {e}")
+            error_msg = f"转录过程错误: {e}"
+            print(error_msg)
             import traceback
             traceback.print_exc()
+
+            # 尝试发送错误信号
+            try:
+                self.signals.error_occurred.emit(error_msg)
+            except:
+                pass
+
         finally:
-            # 清理临时文件
-            self._cleanup_temp_files()
+            try:
+                # 清理临时文件
+                self._cleanup_temp_files()
 
-            # 清除转录标志
-            self.is_transcribing = False
+                # 清除转录标志
+                self.is_transcribing = False
 
-            # 发送完成信号
-            self.signals.transcription_finished.emit()
+                # 发送完成信号
+                if hasattr(self.signals, 'transcription_finished'):
+                    self.signals.transcription_finished.emit()
+
+                print("文件转录线程结束")
+            except Exception as e:
+                print(f"转录线程清理错误: {e}")
+                import traceback
+                traceback.print_exc()
 
     def _transcribe_file_with_manager(self, file_path: str, model_manager: Any, duration: float) -> None:
         """

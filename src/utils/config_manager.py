@@ -71,6 +71,63 @@ class ConfigManager:
             logger.error(f"保存配置失败: {str(e)}")
             return False
 
+    def get_config(self, key: str, default=None) -> Any:
+        """
+        获取配置
+
+        Args:
+            key: 配置键，可以是点分隔的路径，如 'app.window.geometry'
+            default: 默认值，如果配置不存在则返回此值
+
+        Returns:
+            Any: 配置值或默认值
+        """
+        try:
+            keys = key.split('.')
+            value = self._config
+            for k in keys:
+                value = value[k]
+            return value
+        except (KeyError, TypeError):
+            return default
+
+    def get_ui_config(self, key: str, default=None) -> Any:
+        """
+        获取UI配置
+
+        Args:
+            key: 配置键，可以是点分隔的路径，如 'fonts.subtitle'
+            default: 默认值，如果配置不存在则返回此值
+
+        Returns:
+            Any: 配置值或默认值
+        """
+        # 首先尝试从ui_config.json加载
+        try:
+            ui_config_path = os.path.join('config', 'ui_config.json')
+            if os.path.exists(ui_config_path):
+                with open(ui_config_path, 'r', encoding='utf-8') as f:
+                    ui_config = json.load(f)
+
+                # 解析键路径
+                keys = key.split('.')
+                value = ui_config
+                for k in keys:
+                    value = value[k]
+                return value
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
+            # 如果从ui_config.json加载失败，尝试从主配置中的ui部分加载
+            pass
+
+        # 尝试从主配置的ui部分加载
+        try:
+            # 构建完整的键路径
+            full_key = f"ui.{key}"
+            return self.get_config(full_key, default)
+        except (KeyError, TypeError):
+            # 如果从主配置加载失败，返回默认值
+            return default
+
     def get_model_config(self, model_name: str) -> Optional[Dict[str, Any]]:
         """获取指定模型的配置"""
         try:
@@ -87,6 +144,27 @@ class ConfigManager:
         """更新窗口配置"""
         self._config['window'] = config
         self.save_config()
+
+    def update_and_save(self, section: str, config: Dict[str, Any]) -> bool:
+        """
+        更新指定部分的配置并保存
+
+        Args:
+            section: 配置部分名称
+            config: 新的配置值
+
+        Returns:
+            bool: 是否更新成功
+        """
+        try:
+            # 更新配置
+            self._config[section] = config
+
+            # 保存配置
+            return self.save_config()
+        except Exception as e:
+            logger.error(f"更新并保存配置失败: {str(e)}")
+            return False
 
     def get_default_model(self) -> str:
         """获取默认模型名称"""
