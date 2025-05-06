@@ -1570,9 +1570,9 @@ class ASRModelManager(QObject):
                 else:
                     # 非0626模型
                     if model_config.get("type") == "int8":
-                        engine_type = "sherpa_int8"
+                        engine_type = "sherpa_onnx_int8"
                     else:
-                        engine_type = "sherpa_std"
+                        engine_type = "sherpa_onnx_std"
                     sherpa_logger.debug(f"当前引擎是 SherpaOnnxASR ({engine_type})")
             else:
                 # 如果没有model_config，使用默认逻辑
@@ -1590,9 +1590,9 @@ class ASRModelManager(QObject):
                 else:
                     # 非0626模型
                     if hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8:
-                        engine_type = "sherpa_int8"
+                        engine_type = "sherpa_onnx_int8"
                     else:
-                        engine_type = "sherpa_std"
+                        engine_type = "sherpa_onnx_std"
 
                 sherpa_logger.debug(f"当前引擎是 SherpaOnnxASR ({engine_type})")
         else:
@@ -1636,19 +1636,19 @@ class ASRModelManager(QObject):
         else:
             engines["vosk_small"] = False
 
-        # 检查 sherpa_int8 引擎
-        if "sherpa_int8" in self.models_config:
-            model_config = self.models_config["sherpa_int8"]
-            engines["sherpa_int8"] = bool(model_config and model_config.get("enabled", False))
+        # 检查 sherpa_onnx_int8 引擎
+        if "sherpa_onnx_int8" in self.models_config:
+            model_config = self.models_config["sherpa_onnx_int8"]
+            engines["sherpa_onnx_int8"] = bool(model_config and model_config.get("enabled", False))
         else:
-            engines["sherpa_int8"] = False
+            engines["sherpa_onnx_int8"] = False
 
-        # 检查 sherpa_std 引擎
-        if "sherpa_std" in self.models_config:
-            model_config = self.models_config["sherpa_std"]
-            engines["sherpa_std"] = bool(model_config and model_config.get("enabled", False))
+        # 检查 sherpa_onnx_std 引擎
+        if "sherpa_onnx_std" in self.models_config:
+            model_config = self.models_config["sherpa_onnx_std"]
+            engines["sherpa_onnx_std"] = bool(model_config and model_config.get("enabled", False))
         else:
-            engines["sherpa_std"] = False
+            engines["sherpa_onnx_std"] = False
 
         # 检查 sherpa_0626_int8 引擎
         if "sherpa_0626_int8" in self.models_config:

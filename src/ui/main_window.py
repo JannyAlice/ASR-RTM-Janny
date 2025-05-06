@@ -1122,7 +1122,7 @@ class MainWindow(QMainWindow):
 
         # 更新菜单选中状态
         for key, action in self.menu_bar.model_menu.actions.items():
-            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626_int8', 'sherpa_0626_std']:
+            if key in ['vosk_small', 'sherpa_onnx_int8', 'sherpa_onnx_std', 'sherpa_0626_int8', 'sherpa_0626_std']:
                 action.setChecked(key == model_name)
 
         # 加载模型
@@ -1177,9 +1177,9 @@ class MainWindow(QMainWindow):
             str: 模型显示名称
         """
         model_display_names = {
-            'vosk': 'VOSK Small 模型',
-            'sherpa_int8': 'Sherpa-ONNX int8量化模型',
-            'sherpa_std': 'Sherpa-ONNX 标准模型',
+            'vosk_small': 'VOSK Small 模型',
+            'sherpa_onnx_int8': 'Sherpa-ONNX int8量化模型',
+            'sherpa_onnx_std': 'Sherpa-ONNX 标准模型',
             'sherpa_0626_int8': 'Sherpa-ONNX 2023-06-26 int8 模型',
             'sherpa_0626_std': 'Sherpa-ONNX 2023-06-26 标准模型',
             'argos': 'Argostranslate 模型',
