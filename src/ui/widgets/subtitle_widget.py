@@ -252,8 +252,24 @@ class SubtitleWidget(QScrollArea):
                     display_text.append(self.current_partial_paragraph)
 
                 # 更新字幕标签
-                print(f"DEBUG: 更新部分结果: {self.current_partial_paragraph}")
-                self.subtitle_label.setText('\n'.join(display_text))
+                print(f"更新部分结果: {self.current_partial_paragraph}")
+                try:
+                    # 导入 Sherpa-ONNX 日志工具
+                    from src.utils.sherpa_logger import sherpa_logger
+                    sherpa_logger.info(f"更新部分结果: {self.current_partial_paragraph}")
+                except ImportError:
+                    pass
+
+                # 设置字幕文本
+                try:
+                    self.subtitle_label.setText('\n'.join(display_text))
+                except Exception as e:
+                    print(f"设置字幕文本错误: {e}")
+                    try:
+                        from src.utils.sherpa_logger import sherpa_logger
+                        sherpa_logger.error(f"设置字幕文本错误: {e}")
+                    except ImportError:
+                        pass
 
                 # 记录部分结果到历史记录
                 self.partial_results_history.append(self.current_partial_paragraph)
@@ -265,13 +281,27 @@ class SubtitleWidget(QScrollArea):
                 # 但为了保持一致性，我们仍然调用_format_text方法
                 text = self._format_text(text)
 
+                # 导入 Sherpa-ONNX 日志工具
+                try:
+                    from src.utils.sherpa_logger import sherpa_logger
+                except ImportError:
+                    # 如果导入失败，创建一个简单的日志记录器
+                    class DummyLogger:
+                        def debug(self, msg): print(f"DEBUG: {msg}")
+                        def info(self, msg): print(f"INFO: {msg}")
+                        def warning(self, msg): print(f"WARNING: {msg}")
+                        def error(self, msg): print(f"ERROR: {msg}")
+                    sherpa_logger = DummyLogger()
+
                 # 检查是否与最后一个结果相同或相似
                 if self.transcript_text and (text == self.transcript_text[-1] or self._is_similar(text, self.transcript_text[-1])):
                     # 如果是重复或非常相似的文本，不添加到列表
                     print(f"跳过重复文本: {text}")
+                    sherpa_logger.info(f"跳过重复文本: {text}")
                 else:
                     # 添加新的完整结果到转录文本列表
                     print(f"添加新文本: {text}")
+                    sherpa_logger.info(f"添加新文本: {text}")
 
                     # 直接添加到转录文本列表
                     self.transcript_text.append(text)
@@ -283,19 +313,41 @@ class SubtitleWidget(QScrollArea):
                     import time
                     timestamp = time.strftime("%H:%M:%S")
                     self.timestamped_transcript_history.append((text, timestamp))
+                    sherpa_logger.info(f"[{timestamp}] {text}")
 
                     # 如果列表太长，删除旧的段落
                     if len(self.transcript_text) > 5:
                         self.transcript_text = self.transcript_text[-5:]
 
                 # 显示所有完整结果，但限制最大数量以避免性能问题
-                self.subtitle_label.setText('\n'.join(self.transcript_text[-500:]))
+                try:
+                    self.subtitle_label.setText('\n'.join(self.transcript_text[-500:]))
+                    sherpa_logger.debug(f"更新字幕窗口，显示 {len(self.transcript_text[-500:])} 行文本")
+                except Exception as e:
+                    error_msg = f"设置完整结果文本错误: {e}"
+                    print(error_msg)
+                    sherpa_logger.error(error_msg)
+                    import traceback
+                    error_trace = traceback.format_exc()
+                    sherpa_logger.error(error_trace)
+                    print(error_trace)
 
             # 滚动到底部
             QTimer.singleShot(100, self._scroll_to_bottom)
 
         except Exception as e:
-            print(f"更新字幕错误: {e}")
+            error_msg = f"更新字幕错误: {e}"
+            print(error_msg)
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+                sherpa_logger.error(error_msg)
+                import traceback
+                error_trace = traceback.format_exc()
+                sherpa_logger.error(error_trace)
+                print(error_trace)
+            except ImportError:
+                import traceback
+                traceback.print_exc()
 
     def _scroll_to_bottom(self):
         """滚动到底部。"""

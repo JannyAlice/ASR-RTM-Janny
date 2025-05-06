@@ -417,27 +417,76 @@ class SherpaOnnxASR:
 
             # 处理音频数据
             try:
+                # 导入 Sherpa-ONNX 日志工具
+                try:
+                    from src.utils.sherpa_logger import sherpa_logger
+                except ImportError:
+                    # 如果导入失败，创建一个简单的日志记录器
+                    class DummyLogger:
+                        def debug(self, msg): print(f"DEBUG: {msg}")
+                        def info(self, msg): print(f"INFO: {msg}")
+                        def warning(self, msg): print(f"WARNING: {msg}")
+                        def error(self, msg): print(f"ERROR: {msg}")
+                    sherpa_logger = DummyLogger()
+
+                # 记录音频数据信息
+                sherpa_logger.debug(f"音频数据类型: {type(audio_data)}, 形状: {audio_data.shape if hasattr(audio_data, 'shape') else '未知'}")
+                sherpa_logger.debug(f"音频数据最大值: {np.max(np.abs(audio_data)) if hasattr(audio_data, 'shape') else '未知'}")
+
                 # 直接处理整个音频数据（完全按照官方测试文件的方法）
+                sherpa_logger.debug("接受音频数据...")
                 stream.accept_waveform(self.sample_rate, audio_data)
+                sherpa_logger.debug("音频数据接受成功")
 
                 # 添加尾部填充（这是关键步骤，来自官方测试文件）
+                sherpa_logger.debug("添加尾部填充...")
                 tail_paddings = np.zeros(int(0.2 * self.sample_rate), dtype=np.float32)
                 stream.accept_waveform(self.sample_rate, tail_paddings)
+                sherpa_logger.debug("尾部填充添加成功")
 
                 # 标记输入结束
+                sherpa_logger.debug("标记输入结束...")
                 stream.input_finished()
+                sherpa_logger.debug("输入结束标记成功")
 
                 # 解码
+                sherpa_logger.debug("开始解码...")
+                decode_count = 0
                 while self.recognizer.is_ready(stream):
                     self.recognizer.decode_stream(stream)
+                    decode_count += 1
+                sherpa_logger.debug(f"解码完成，解码次数: {decode_count}")
+
+                print(f"音频处理成功，解码次数: {decode_count}")
             except Exception as e:
-                print(f"处理音频数据错误: {e}")
-                import traceback
-                print(traceback.format_exc())
+                error_msg = f"处理音频数据错误: {e}"
+                print(error_msg)
+                try:
+                    from src.utils.sherpa_logger import sherpa_logger
+                    sherpa_logger.error(error_msg)
+                    import traceback
+                    error_trace = traceback.format_exc()
+                    sherpa_logger.error(error_trace)
+                    print(error_trace)
+                except ImportError:
+                    import traceback
+                    traceback.print_exc()
                 return None
 
             # 获取结果
             try:
+                # 导入 Sherpa-ONNX 日志工具
+                try:
+                    from src.utils.sherpa_logger import sherpa_logger
+                except ImportError:
+                    # 如果导入失败，创建一个简单的日志记录器
+                    class DummyLogger:
+                        def debug(self, msg): print(f"DEBUG: {msg}")
+                        def info(self, msg): print(f"INFO: {msg}")
+                        def warning(self, msg): print(f"WARNING: {msg}")
+                        def error(self, msg): print(f"ERROR: {msg}")
+                    sherpa_logger = DummyLogger()
+
                 # 使用 get_result 获取结果
                 result = self.recognizer.get_result(stream)
                 if result:
@@ -447,10 +496,25 @@ class SherpaOnnxASR:
                     result = re.sub(r'\s+$', '', result)  # 去除末尾空格
                     if not result.endswith('.'):
                         result += '.'  # 确保结果以句号结尾
-                    print(f"DEBUG: 转录结果: {result}")
+                    print(f"转录结果: {result}")
+                    sherpa_logger.info(f"转录结果: {result}")
+                else:
+                    print("未获取到转录结果")
+                    sherpa_logger.warning("未获取到转录结果")
                 return result if result else None
             except Exception as e:
-                print(f"获取结果错误: {e}")
+                error_msg = f"获取结果错误: {e}"
+                print(error_msg)
+                try:
+                    from src.utils.sherpa_logger import sherpa_logger
+                    sherpa_logger.error(error_msg)
+                    import traceback
+                    error_trace = traceback.format_exc()
+                    sherpa_logger.error(error_trace)
+                    print(error_trace)
+                except ImportError:
+                    import traceback
+                    traceback.print_exc()
                 return None
 
         except Exception as e:

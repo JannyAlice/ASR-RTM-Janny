@@ -106,7 +106,7 @@ class AudioWorker(QObject):
 
                     except Exception as e:
                         self.error.emit(f"音频处理错误: {str(e)}")
-                        
+
         except Exception as e:
             self.error.emit(f"音频捕获错误: {str(e)}")
         finally:
@@ -116,7 +116,7 @@ class AudioWorker(QObject):
         """解析完整识别结果"""
         if isinstance(result, str) and not result.startswith('{'):
             return result.strip()
-        
+
         try:
             if isinstance(result, str):
                 result_json = json.loads(result)
@@ -135,14 +135,14 @@ class AudioWorker(QObject):
                 return text
         except:
             return str(result).strip()
-        
+
         return None
 
     def _parse_partial_result(self, partial):
         """解析部分识别结果"""
         if isinstance(partial, str) and not partial.startswith('{'):
             return partial.strip()
-        
+
         try:
             if isinstance(partial, str):
                 try:
@@ -264,11 +264,11 @@ class AudioProcessor(QObject):
 
         if hasattr(self, 'worker') and self.worker:
             self.worker.running = False
-            
+
         if self.worker_thread:
             self.worker_thread.quit()
             self.worker_thread.wait()
-            
+
         self.is_capturing = False
         return True
 
@@ -343,13 +343,15 @@ class AudioProcessor(QObject):
                         if accept_result:
                             # 获取完整结果
                             result = recognizer.Result()
-                            print(f"DEBUG: 完整结果: {result}, 类型: {type(result)}")
+                            print(f"完整结果: {result}, 类型: {type(result)}, 引擎类型: {engine_type}")
+                            sherpa_logger.info(f"完整结果: {result}, 类型: {type(result)}, 引擎类型: {engine_type}")
 
                             # 直接使用结果文本（针对 Sherpa-ONNX 模型）
                             if isinstance(result, str) and not result.startswith('{'):
                                 # 如果是纯文本字符串（不是 JSON），直接使用
                                 text = result.strip()
-                                print(f"DEBUG: 直接使用文本结果: {text}")
+                                print(f"直接使用文本结果: {text}")
+                                sherpa_logger.info(f"直接使用文本结果: {text}")
                             else:
                                 # 尝试解析 JSON 或其他格式
                                 try:
@@ -362,16 +364,23 @@ class AudioProcessor(QObject):
                                     else:
                                         result_json = {"text": "无法解析的结果"}
 
-                                    print(f"DEBUG: 解析后的结果: {result_json}")
+                                    print(f"解析后的结果: {result_json}")
+                                    sherpa_logger.info(f"解析后的结果: {result_json}")
 
                                     # 提取文本
                                     if 'text' in result_json and result_json['text'].strip():
                                         text = result_json['text'].strip()
                                     else:
-                                        print(f"DEBUG: 结果中没有文本或文本为空")
+                                        print(f"结果中没有文本或文本为空")
+                                        sherpa_logger.warning(f"结果中没有文本或文本为空")
                                         continue
                                 except Exception as e:
-                                    print(f"DEBUG: 解析结果错误: {e}")
+                                    print(f"解析结果错误: {e}")
+                                    sherpa_logger.error(f"解析结果错误: {e}")
+                                    import traceback
+                                    error_trace = traceback.format_exc()
+                                    sherpa_logger.error(error_trace)
+                                    print(error_trace)
                                     # 如果解析失败，尝试直接使用结果
                                     text = str(result).strip()
                                     if not text:
@@ -390,18 +399,22 @@ class AudioProcessor(QObject):
                         else:
                             # 获取部分结果
                             partial_result = recognizer.PartialResult()
-                            print(f"DEBUG: 部分结果: {partial_result}, 类型: {type(partial_result)}")
+                            print(f"部分结果: {partial_result}, 类型: {type(partial_result)}, 引擎类型: {engine_type}")
+                            sherpa_logger.info(f"部分结果: {partial_result}, 类型: {type(partial_result)}, 引擎类型: {engine_type}")
 
                             # 直接使用结果文本（针对 Sherpa-ONNX 模型）
                             if isinstance(partial_result, str) and not partial_result.startswith('{'):
                                 # 如果是纯文本字符串（不是 JSON），直接使用
                                 partial_text = partial_result.strip()
-                                print(f"DEBUG: 直接使用部分文本结果: {partial_text}")
+                                print(f"直接使用部分文本结果: {partial_text}")
+                                sherpa_logger.info(f"直接使用部分文本结果: {partial_text}")
                                 if partial_text:
-                                    print(f"DEBUG: 发送部分文本: {partial_text}")
+                                    print(f"发送部分文本: {partial_text}")
+                                    sherpa_logger.info(f"发送部分文本: {partial_text}")
                                     self.signals.new_text.emit("PARTIAL:" + partial_text)
                                 else:
-                                    print(f"DEBUG: 部分文本为空，不发送")
+                                    print(f"部分文本为空，不发送")
+                                    sherpa_logger.debug(f"部分文本为空，不发送")
                             else:
                                 # 尝试解析 JSON 或其他格式
                                 try:
@@ -418,32 +431,58 @@ class AudioProcessor(QObject):
                                     else:
                                         partial = {'partial': str(partial_result)}
 
-                                    print(f"DEBUG: 解析后的部分结果: {partial}")
+                                    print(f"解析后的部分结果: {partial}")
+                                    sherpa_logger.info(f"解析后的部分结果: {partial}")
 
                                     # 确保partial字段存在且有效
                                     partial_text = partial.get('partial', '').strip()
                                     if partial_text:
-                                        print(f"DEBUG: 发送部分文本: {partial_text}")
+                                        print(f"发送部分文本: {partial_text}")
+                                        sherpa_logger.info(f"发送部分文本: {partial_text}")
                                         self.signals.new_text.emit("PARTIAL:" + partial_text)
                                     else:
-                                        print(f"DEBUG: 部分结果中没有文本或文本为空")
+                                        print(f"部分结果中没有文本或文本为空")
+                                        sherpa_logger.warning(f"部分结果中没有文本或文本为空")
                                 except Exception as e:
-                                    print(f"DEBUG: 解析部分结果错误: {e}")
+                                    print(f"解析部分结果错误: {e}")
+                                    sherpa_logger.error(f"解析部分结果错误: {e}")
+                                    import traceback
+                                    error_trace = traceback.format_exc()
+                                    sherpa_logger.error(error_trace)
+                                    print(error_trace)
                                     # 如果解析失败，尝试直接使用结果
                                     partial_text = str(partial_result).strip()
                                     if partial_text:
-                                        print(f"DEBUG: 发送部分文本: {partial_text}")
+                                        print(f"发送部分文本: {partial_text}")
+                                        sherpa_logger.info(f"发送部分文本: {partial_text}")
                                         self.signals.new_text.emit("PARTIAL:" + partial_text)
                                     else:
-                                        print(f"DEBUG: 部分文本为空，不发送")
+                                        print(f"部分文本为空，不发送")
+                                        sherpa_logger.debug(f"部分文本为空，不发送")
                     except Exception as e:
-                        self.signals.error_occurred.emit(f"音频处理错误: {str(e)}")
-                        print(f"DEBUG: 音频处理错误: {e}")
+                        error_msg = f"音频处理错误: {str(e)}"
+                        self.signals.error_occurred.emit(error_msg)
+                        print(f"错误: {error_msg}")
+                        sherpa_logger.error(error_msg)
                         import traceback
-                        traceback.print_exc()
+                        error_trace = traceback.format_exc()
+                        sherpa_logger.error(error_trace)
+                        print(error_trace)
 
         except Exception as e:
-            self.signals.error_occurred.emit(f"音频捕获错误: {e}")
+            error_msg = f"音频捕获错误: {e}"
+            self.signals.error_occurred.emit(error_msg)
+            print(f"错误: {error_msg}")
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+                sherpa_logger.error(error_msg)
+                import traceback
+                error_trace = traceback.format_exc()
+                sherpa_logger.error(error_trace)
+                print(error_trace)
+            except ImportError:
+                import traceback
+                traceback.print_exc()
 
         finally:
             # 发送状态信号
