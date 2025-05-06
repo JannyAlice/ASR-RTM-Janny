@@ -29,31 +29,12 @@ except ImportError:
 class MainWindow(QMainWindow):
     """主窗口类"""
 
-    def __init__(self, recognizer=None):
+    def __init__(self):
         """初始化主窗口"""
         super().__init__()
-        self.recognizer = recognizer
 
-        # 检查COM是否已初始化，如果没有则初始化
-        # 导入日志工具
-        try:
-            from src.utils.sherpa_logger import sherpa_logger
-        except ImportError:
-            # 如果导入失败，创建一个简单的日志记录器
-            class DummyLogger:
-                def debug(self, msg): print(f"DEBUG: {msg}")
-                def info(self, msg): print(f"INFO: {msg}")
-                def warning(self, msg): print(f"WARNING: {msg}")
-                def error(self, msg): print(f"ERROR: {msg}")
-            sherpa_logger = DummyLogger()
-
-        # 检查COM状态并初始化（如果需要）
-        if not hasattr(com_handler, "_initialized") or not com_handler._initialized:
-            sherpa_logger.info("MainWindow中初始化COM...")
-            com_handler.initialize_com()
-            sherpa_logger.info("MainWindow中COM初始化成功")
-        else:
-            sherpa_logger.info("COM已经初始化，MainWindow跳过初始化")
+        # 初始化COM
+        com_handler.initialize_com()
 
         # 创建信号
         self.signals = TranscriptionSignals()
@@ -145,65 +126,12 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         """连接信号"""
-        try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，使用标准日志
-                sherpa_logger = logging.getLogger(__name__)
-
-            sherpa_logger.info("开始连接信号...")
-
-            # 连接转录信号 - 添加信号存在性检查
-            if hasattr(self.signals, 'new_text'):
-                sherpa_logger.debug("连接 new_text 信号")
-                self.signals.new_text.connect(self.subtitle_widget.update_text)
-            else:
-                sherpa_logger.warning("未找到 new_text 信号")
-
-            if hasattr(self.signals, 'progress_updated'):
-                sherpa_logger.debug("连接 progress_updated 信号")
-                self.signals.progress_updated.connect(self.control_panel.update_progress)
-            else:
-                sherpa_logger.warning("未找到 progress_updated 信号")
-
-            if hasattr(self.signals, 'status_updated'):
-                sherpa_logger.debug("连接 status_updated 信号")
-                self.signals.status_updated.connect(self.control_panel.update_status)
-            else:
-                sherpa_logger.warning("未找到 status_updated 信号")
-
-            if hasattr(self.signals, 'error_occurred'):
-                sherpa_logger.debug("连接 error_occurred 信号")
-                self.signals.error_occurred.connect(self._show_error)
-            else:
-                sherpa_logger.warning("未找到 error_occurred 信号")
-
-            if hasattr(self.signals, 'transcription_finished'):
-                sherpa_logger.debug("连接 transcription_finished 信号")
-                self.signals.transcription_finished.connect(self._on_transcription_finished)
-            else:
-                sherpa_logger.warning("未找到 transcription_finished 信号")
-
-            # 连接新增的生命周期信号（如果存在）
-            if hasattr(self.signals, 'transcription_started'):
-                sherpa_logger.debug("连接 transcription_started 信号")
-                self.signals.transcription_started.connect(self._on_transcription_started)
-
-            if hasattr(self.signals, 'transcription_paused'):
-                sherpa_logger.debug("连接 transcription_paused 信号")
-                self.signals.transcription_paused.connect(self._on_transcription_paused)
-
-            if hasattr(self.signals, 'transcription_resumed'):
-                sherpa_logger.debug("连接 transcription_resumed 信号")
-                self.signals.transcription_resumed.connect(self._on_transcription_resumed)
-
-            sherpa_logger.info("信号连接完成")
-        except Exception as e:
-            logging.error(f"连接信号时出错: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
+        # 连接转录信号
+        self.signals.new_text.connect(self.subtitle_widget.update_text)
+        self.signals.progress_updated.connect(self.control_panel.update_progress)
+        self.signals.status_updated.connect(self.control_panel.update_status)
+        self.signals.error_occurred.connect(self._show_error)
+        self.signals.transcription_finished.connect(self._on_transcription_finished)
 
         # 连接控制面板信号
         self.control_panel.start_clicked.connect(self._on_start_clicked)
@@ -229,7 +157,7 @@ class MainWindow(QMainWindow):
 
         # 更新菜单选中状态
         for key, action in self.menu_bar.model_menu.actions.items():
-            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626_int8', 'sherpa_0626_std']:
+            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626']:
                 action.setChecked(key == default_model)
 
         # 加载模型
@@ -639,133 +567,17 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(100, lambda: self.subtitle_widget.verticalScrollBar().setValue(0))
 
     @pyqtSlot()
-    def _on_transcription_started(self):
-        """转录开始处理"""
-        try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，使用标准日志
-                sherpa_logger = logging.getLogger(__name__)
-
-            sherpa_logger.info("转录开始处理")
-
-            # 更新菜单状态
-            self.menu_bar.update_menu_state(is_recording=True)
-
-            # 更新状态
-            self.signals.status_updated.emit("转录已开始")
-
-            # 清空转录文本
-            self.subtitle_widget.transcript_text = []
-
-            # 更新字幕窗口
-            self.subtitle_widget.subtitle_label.setText("正在转录...")
-
-        except Exception as e:
-            logging.error(f"转录开始处理错误: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
-            self.signals.error_occurred.emit(f"转录开始处理错误: {e}")
-
-    @pyqtSlot()
-    def _on_transcription_paused(self):
-        """转录暂停处理"""
-        try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，使用标准日志
-                sherpa_logger = logging.getLogger(__name__)
-
-            sherpa_logger.info("转录暂停处理")
-
-            # 更新状态
-            self.signals.status_updated.emit("转录已暂停")
-
-            # 更新字幕窗口
-            current_text = self.subtitle_widget.subtitle_label.text()
-            if current_text:
-                self.subtitle_widget.subtitle_label.setText(current_text + "\n\n[转录已暂停]")
-
-            # 滚动到底部
-            QTimer.singleShot(100, self.subtitle_widget._scroll_to_bottom)
-
-        except Exception as e:
-            logging.error(f"转录暂停处理错误: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
-            self.signals.error_occurred.emit(f"转录暂停处理错误: {e}")
-
-    @pyqtSlot()
-    def _on_transcription_resumed(self):
-        """转录恢复处理"""
-        try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，使用标准日志
-                sherpa_logger = logging.getLogger(__name__)
-
-            sherpa_logger.info("转录恢复处理")
-
-            # 更新状态
-            self.signals.status_updated.emit("转录已恢复")
-
-            # 更新字幕窗口
-            current_text = self.subtitle_widget.subtitle_label.text()
-            if "[转录已暂停]" in current_text:
-                # 移除暂停标记
-                new_text = current_text.replace("\n\n[转录已暂停]", "")
-                self.subtitle_widget.subtitle_label.setText(new_text + "\n\n[转录已恢复]")
-            else:
-                self.subtitle_widget.subtitle_label.setText(current_text + "\n\n[转录已恢复]")
-
-            # 滚动到底部
-            QTimer.singleShot(100, self.subtitle_widget._scroll_to_bottom)
-
-        except Exception as e:
-            logging.error(f"转录恢复处理错误: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
-            self.signals.error_occurred.emit(f"转录恢复处理错误: {e}")
-
-    @pyqtSlot()
     def _on_transcription_finished(self):
         """转录完成处理"""
-        try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，使用标准日志
-                sherpa_logger = logging.getLogger(__name__)
+        # 重置控制面板
+        self.control_panel.reset()
 
-            sherpa_logger.info("转录完成处理开始")
+        # 重新启用相关菜单项
+        self.menu_bar.update_menu_state(is_recording=False)
 
-            # 重置控制面板
-            self.control_panel.reset()
-            sherpa_logger.debug("控制面板已重置")
-
-            # 重新启用相关菜单项
-            self.menu_bar.update_menu_state(is_recording=False)
-            sherpa_logger.debug("菜单状态已更新")
-
-            # 如果已经保存过文件，则不再保存
-            if hasattr(MainWindow, '_has_saved_transcript') and MainWindow._has_saved_transcript:
-                sherpa_logger.info("转录已保存，跳过保存步骤")
-                self.signals.status_updated.emit("转录已完成")
-                return
-
-            sherpa_logger.info("准备保存转录结果")
-        except Exception as e:
-            logging.error(f"转录完成处理初始化错误: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
-            self.signals.error_occurred.emit(f"转录完成处理错误: {e}")
+        # 如果已经保存过文件，则不再保存
+        if MainWindow._has_saved_transcript:
+            self.signals.status_updated.emit("转录已完成")
             return
 
         # 保存转录文本
@@ -887,29 +699,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str)
     def _show_error(self, error_message):
         """显示错误消息"""
-        try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，使用标准日志
-                sherpa_logger = logging.getLogger(__name__)
-
-            sherpa_logger.error(f"显示错误消息: {error_message}")
-
-            # 显示错误对话框
-            QMessageBox.critical(self, "错误", error_message)
-
-        except Exception as e:
-            logging.error(f"显示错误消息时出错: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
-            # 尝试使用更简单的方式显示错误
-            try:
-                print(f"错误: {error_message}")
-                print(f"显示错误消息时出错: {e}")
-            except:
-                pass
+        QMessageBox.critical(self, "错误", error_message)
 
     @pyqtSlot()
     def save_transcript(self):
@@ -1122,7 +912,7 @@ class MainWindow(QMainWindow):
 
         # 更新菜单选中状态
         for key, action in self.menu_bar.model_menu.actions.items():
-            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626_int8', 'sherpa_0626_std']:
+            if key in ['vosk', 'sherpa_int8', 'sherpa_std', 'sherpa_0626']:
                 action.setChecked(key == model_name)
 
         # 加载模型
@@ -1180,8 +970,7 @@ class MainWindow(QMainWindow):
             'vosk': 'VOSK Small 模型',
             'sherpa_int8': 'Sherpa-ONNX int8量化模型',
             'sherpa_std': 'Sherpa-ONNX 标准模型',
-            'sherpa_0626_int8': 'Sherpa-ONNX 2023-06-26 int8 模型',
-            'sherpa_0626_std': 'Sherpa-ONNX 2023-06-26 标准模型',
+            'sherpa_0626': 'Sherpa-ONNX 2023-06-26模型',
             'argos': 'Argostranslate 模型',
             'opus': 'Opus-Mt-ONNX 模型'
         }
@@ -1291,43 +1080,6 @@ class MainWindow(QMainWindow):
 
         QMessageBox.information(self, "模型目录", info)
 
-    def show_asr_config_dialog(self):
-        """显示ASR配置对话框"""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFormLayout
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("ASR 配置")
-        layout = QVBoxLayout()
-
-        form_layout = QFormLayout()
-
-        # 创建标签和输入框
-        enable_endpoint_label = QLabel("启用端点检测:")
-        self.enable_endpoint_edit = QLineEdit(str(self.model_manager.current_engine.config.get("enable_endpoint", 1)))
-        form_layout.addRow(enable_endpoint_label, self.enable_endpoint_edit)
-
-        rule1_label = QLabel("规则1尾随静音时间 (秒):")
-        self.rule1_edit = QLineEdit(str(self.model_manager.current_engine.config.get("rule1_min_trailing_silence", 3.0)))
-        form_layout.addRow(rule1_label, self.rule1_edit)
-
-        rule2_label = QLabel("规则2尾随静音时间 (秒):")
-        self.rule2_edit = QLineEdit(str(self.model_manager.current_engine.config.get("rule2_min_trailing_silence", 1.5)))
-        form_layout.addRow(rule2_label, self.rule2_edit)
-
-        rule3_label = QLabel("规则3最小语音长度 (帧):")
-        self.rule3_edit = QLineEdit(str(self.model_manager.current_engine.config.get("rule3_min_utterance_length", 25)))
-        form_layout.addRow(rule3_label, self.rule3_edit)
-
-        layout.addLayout(form_layout)
-
-        # 创建保存按钮
-        save_button = QPushButton("保存")
-        save_button.clicked.connect(self.save_asr_config)
-        layout.addWidget(save_button)
-
-        dialog.setLayout(layout)
-        dialog.exec_()
-
     def search_model_documentation(self):
         """搜索模型文档"""
         # 这里是搜索模型文档的占位代码
@@ -1383,48 +1135,20 @@ class MainWindow(QMainWindow):
             event: 关闭事件
         """
         try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，创建一个简单的日志记录器
-                class DummyLogger:
-                    def debug(self, msg): print(f"DEBUG: {msg}")
-                    def info(self, msg): print(f"INFO: {msg}")
-                    def warning(self, msg): print(f"WARNING: {msg}")
-                    def error(self, msg): print(f"ERROR: {msg}")
-                sherpa_logger = DummyLogger()
-
             # 保存窗口状态
             self.save_window_state()
 
             # 停止所有转录活动
             if self.is_file_mode and HAS_FILE_TRANSCRIBER and self.file_transcriber:
-                sherpa_logger.info("关闭窗口时停止文件转录")
-                try:
-                    self.file_transcriber.stop_transcription()
-                except Exception as e:
-                    sherpa_logger.error(f"停止文件转录时出错: {e}")
+                self.file_transcriber.stop_transcription()
             else:
-                sherpa_logger.info("关闭窗口时停止音频捕获")
-                try:
-                    # 检查audio_processor是否存在
-                    if hasattr(self, 'audio_processor') and self.audio_processor:
-                        self.audio_processor.stop_capture()
-                    else:
-                        sherpa_logger.warning("audio_processor不存在，跳过停止音频捕获")
-                except Exception as e:
-                    sherpa_logger.error(f"停止音频捕获时出错: {e}")
+                self.audio_processor.stop_capture()
 
-            # 检查COM状态并清理（如果需要）
-            # 注意：在main.py中已经注册了应用程序退出时的COM清理，
-            # 所以这里不需要重复清理，避免出现COM已释放的错误
-            sherpa_logger.info("关闭窗口时跳过COM清理，由主程序负责")
+            # 释放COM
+            com_handler.uninitialize_com()
 
         except Exception as e:
             logging.error(f"关闭窗口时出错: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
         finally:
             # 接受关闭事件
             event.accept()

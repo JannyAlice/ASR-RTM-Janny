@@ -2,7 +2,6 @@
 音频处理模块
 负责音频捕获和处理
 """
-import threading
 import time
 import json
 import numpy as np
@@ -47,52 +46,123 @@ class AudioWorker(QObject):
         self.recognizer = recognizer
         self.running = True
 
+        # 尝试初始化COM（在主线程中）
+        try:
+            from src.utils.com_handler import com_handler
+            if not hasattr(com_handler, "_initialized") or not com_handler._initialized:
+                print("AudioWorker初始化时初始化COM...")
+                com_handler.initialize_com()
+                print("AudioWorker初始化时COM初始化成功")
+            else:
+                print("COM已经初始化，AudioWorker初始化跳过COM初始化")
+        except Exception as e:
+            print(f"AudioWorker初始化时COM初始化错误: {e}")
+            # 即使COM初始化失败，也继续执行
+
     def process(self):
         """处理音频数据"""
         start_time = time.time()
         last_progress_update = time.time()
 
+        # 导入日志工具
         try:
+            from src.utils.sherpa_logger import sherpa_logger
+        except ImportError:
+            # 如果导入失败，创建一个简单的日志记录器
+            class DummyLogger:
+                def debug(self, msg): print(f"DEBUG: {msg}")
+                def info(self, msg): print(f"INFO: {msg}")
+                def warning(self, msg): print(f"WARNING: {msg}")
+                def error(self, msg): print(f"ERROR: {msg}")
+            sherpa_logger = DummyLogger()
+
+        try:
+            # 确保COM已初始化
+            try:
+                from src.utils.com_handler import com_handler
+                if not hasattr(com_handler, "_initialized") or not com_handler._initialized:
+                    sherpa_logger.info("AudioWorker线程中初始化COM...")
+                    com_handler.initialize_com()
+                    sherpa_logger.info("AudioWorker线程中COM初始化成功")
+                else:
+                    sherpa_logger.info("COM已经初始化，AudioWorker线程跳过初始化")
+            except Exception as e:
+                sherpa_logger.error(f"COM初始化错误: {e}")
+                import traceback
+                sherpa_logger.error(traceback.format_exc())
+                # 即使COM初始化失败，也尝试继续执行
+
+            # 记录引擎类型
+            engine_type = getattr(self.recognizer, 'engine_type', None)
+            sherpa_logger.info(f"开始音频处理，引擎类型: {engine_type}")
+
             with sc.get_microphone(id=str(self.device.id), include_loopback=True).recorder(
                 samplerate=self.sample_rate
             ) as mic:
                 self.status.emit(f"正在从 {self.device.name} 捕获音频...")
+                sherpa_logger.info(f"正在从 {self.device.name} 捕获音频...")
 
                 while self.running:
                     # 捕获音频数据
                     data = mic.record(numframes=self.buffer_size)
 
+                    # 记录音频数据信息
+                    sherpa_logger.debug(f"捕获音频数据，形状: {data.shape}")
+
                     # 转换为单声道
                     if data.shape[1] > 1:
                         data = np.mean(data, axis=1)
+                        sherpa_logger.debug(f"转换为单声道，形状: {data.shape}")
 
                     # 检查音频数据是否有效
-                    if np.max(np.abs(data)) < 0.01:
+                    max_amplitude = np.max(np.abs(data))
+                    if max_amplitude < 0.01:
+                        sherpa_logger.debug(f"音频数据几乎是静音，最大振幅: {max_amplitude}，跳过")
                         continue
 
                     try:
                         # 处理音频数据
                         engine_type = getattr(self.recognizer, 'engine_type', None)
+                        sherpa_logger.debug(f"处理音频数据，引擎类型: {engine_type}")
+
                         if engine_type and engine_type.startswith('sherpa'):
                             # 对于 Sherpa-ONNX 模型，直接传递 numpy 数组
+                            sherpa_logger.debug(f"使用 Sherpa-ONNX 模型，直接传递 numpy 数组")
                             accept_result = self.recognizer.AcceptWaveform(data)
                         else:
                             # 对于 Vosk 模型，转换为 16 位整数字节
                             data_bytes = (data * 32767).astype(np.int16).tobytes()
+                            sherpa_logger.debug(f"使用 Vosk 模型，转换为 16 位整数字节，长度: {len(data_bytes)}")
                             accept_result = self.recognizer.AcceptWaveform(data_bytes)
+
+                        sherpa_logger.debug(f"AcceptWaveform 结果: {accept_result}")
 
                         if accept_result:
                             # 获取完整结果
                             result = self.recognizer.Result()
+                            sherpa_logger.info(f"完整结果: {result}, 类型: {type(result)}")
+
                             text = self._parse_result(result)
+                            sherpa_logger.info(f"解析后的完整结果: {text}")
+
                             if text:
+                                sherpa_logger.info(f"发送完整文本: {text}")
                                 self.new_text.emit(text)
+                            else:
+                                sherpa_logger.warning(f"完整文本为空，不发送")
                         else:
                             # 获取部分结果
                             partial = self.recognizer.PartialResult()
+                            sherpa_logger.debug(f"部分结果: {partial}, 类型: {type(partial)}")
+
                             text = self._parse_partial_result(partial)
+                            sherpa_logger.debug(f"解析后的部分结果: {text}")
+
                             if text:
+                                sherpa_logger.debug(f"发送部分文本: {text}")
                                 self.new_text.emit("PARTIAL:" + text)
+                            else:
+                                sherpa_logger.debug(f"部分文本为空，不发送")
 
                         # 更新进度
                         current_time = time.time()
@@ -105,60 +175,195 @@ class AudioWorker(QObject):
                             last_progress_update = current_time
 
                     except Exception as e:
-                        self.error.emit(f"音频处理错误: {str(e)}")
+                        error_msg = f"音频处理错误: {str(e)}"
+                        self.error.emit(error_msg)
+                        sherpa_logger.error(error_msg)
+                        import traceback
+                        error_trace = traceback.format_exc()
+                        sherpa_logger.error(error_trace)
+                        print(error_trace)
 
         except Exception as e:
-            self.error.emit(f"音频捕获错误: {str(e)}")
+            error_msg = f"音频捕获错误: {str(e)}"
+            self.error.emit(error_msg)
+            sherpa_logger.error(error_msg)
+            import traceback
+            error_trace = traceback.format_exc()
+            sherpa_logger.error(error_trace)
+            print(error_trace)
         finally:
+            sherpa_logger.info("音频处理结束")
             self.finished.emit()
 
     def _parse_result(self, result):
         """解析完整识别结果"""
-        if isinstance(result, str) and not result.startswith('{'):
-            return result.strip()
-
         try:
-            if isinstance(result, str):
-                result_json = json.loads(result)
-            elif hasattr(result, 'text'):
-                result_json = {"text": result.text}
-            elif hasattr(result, '__str__'):
-                result_json = {"text": str(result)}
-            else:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
+            # 记录原始结果
+            sherpa_logger.debug(f"解析完整结果: {result}, 类型: {type(result)}")
+
+            # 检查引擎类型
+            engine_type = getattr(self.recognizer, 'engine_type', None)
+            sherpa_logger.debug(f"引擎类型: {engine_type}")
+
+            # 如果是Vosk引擎，特殊处理
+            if engine_type == "vosk_small" or engine_type == "vosk":
+                sherpa_logger.debug("使用Vosk特殊处理逻辑")
+                # Vosk引擎返回的是JSON字符串
+                if isinstance(result, str):
+                    try:
+                        result_json = json.loads(result)
+                        text = result_json.get('text', '').strip()
+                        sherpa_logger.debug(f"Vosk JSON解析结果: {text}")
+                    except json.JSONDecodeError:
+                        # 如果不是有效的JSON，直接使用文本
+                        text = result.strip()
+                        sherpa_logger.debug(f"Vosk非JSON结果: {text}")
+                else:
+                    # 如果不是字符串，尝试转换为字符串
+                    text = str(result).strip()
+                    sherpa_logger.debug(f"Vosk非字符串结果: {text}")
+
+                # 格式化文本
+                if text:
+                    if len(text) > 0:
+                        text = text[0].upper() + text[1:]
+                    if text[-1] not in ['.', '?', '!']:
+                        text += '.'
+                    sherpa_logger.debug(f"Vosk格式化后结果: {text}")
+                    return text
                 return None
 
-            text = result_json.get('text', '').strip()
-            if text:
-                text = text[0].upper() + text[1:]
-                if text[-1] not in ['.', '?', '!']:
-                    text += '.'
+            # 如果是纯文本字符串（不是 JSON），直接使用
+            if isinstance(result, str) and not result.startswith('{'):
+                text = result.strip()
+                if text:
+                    # 格式化文本
+                    if len(text) > 0:
+                        text = text[0].upper() + text[1:]
+                    if text[-1] not in ['.', '?', '!']:
+                        text += '.'
                 return text
-        except:
-            return str(result).strip()
+
+            # 尝试解析 JSON 或其他格式
+            try:
+                if isinstance(result, str):
+                    result_json = json.loads(result)
+                elif hasattr(result, 'text'):
+                    result_json = {"text": result.text}
+                elif hasattr(result, '__str__'):
+                    result_json = {"text": str(result)}
+                else:
+                    return None
+
+                text = result_json.get('text', '').strip()
+                if text:
+                    # 格式化文本
+                    if len(text) > 0:
+                        text = text[0].upper() + text[1:]
+                    if text[-1] not in ['.', '?', '!']:
+                        text += '.'
+                    return text
+            except Exception as e:
+                sherpa_logger.error(f"解析结果错误: {e}")
+                # 如果解析失败，尝试直接使用结果
+                text = str(result).strip()
+                if text:
+                    # 格式化文本
+                    if len(text) > 0:
+                        text = text[0].upper() + text[1:]
+                    if text[-1] not in ['.', '?', '!']:
+                        text += '.'
+                    return text
+        except Exception as e:
+            print(f"_parse_result 错误: {e}")
+            import traceback
+            print(traceback.format_exc())
 
         return None
 
     def _parse_partial_result(self, partial):
         """解析部分识别结果"""
-        if isinstance(partial, str) and not partial.startswith('{'):
-            return partial.strip()
-
         try:
-            if isinstance(partial, str):
-                try:
-                    partial_json = json.loads(partial)
-                except json.JSONDecodeError:
-                    return partial.strip()
-            elif isinstance(partial, dict):
-                partial_json = partial
-            elif hasattr(partial, 'partial'):
-                partial_json = {'partial': str(partial.partial)}
-            else:
-                partial_json = {'partial': str(partial)}
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
 
-            return partial_json.get('partial', '').strip()
-        except:
-            return str(partial).strip()
+            # 记录原始结果
+            sherpa_logger.debug(f"解析部分结果: {partial}, 类型: {type(partial)}")
+
+            # 检查引擎类型
+            engine_type = getattr(self.recognizer, 'engine_type', None)
+            sherpa_logger.debug(f"引擎类型: {engine_type}")
+
+            # 如果是Vosk引擎，特殊处理
+            if engine_type == "vosk_small" or engine_type == "vosk":
+                sherpa_logger.debug("使用Vosk特殊处理逻辑")
+                # Vosk引擎返回的是JSON字符串
+                if isinstance(partial, str):
+                    try:
+                        partial_json = json.loads(partial)
+                        partial_text = partial_json.get('partial', '').strip()
+                        sherpa_logger.debug(f"Vosk JSON解析部分结果: {partial_text}")
+                        return partial_text
+                    except json.JSONDecodeError:
+                        # 如果不是有效的JSON，直接使用文本
+                        partial_text = partial.strip()
+                        sherpa_logger.debug(f"Vosk非JSON部分结果: {partial_text}")
+                        return partial_text
+                else:
+                    # 如果不是字符串，尝试转换为字符串
+                    partial_text = str(partial).strip()
+                    sherpa_logger.debug(f"Vosk非字符串部分结果: {partial_text}")
+                    return partial_text
+
+            # 如果是纯文本字符串（不是 JSON），直接使用
+            if isinstance(partial, str) and not partial.startswith('{'):
+                return partial.strip()
+
+            # 尝试解析 JSON 或其他格式
+            try:
+                if isinstance(partial, str):
+                    try:
+                        partial_json = json.loads(partial)
+                    except json.JSONDecodeError:
+                        return partial.strip()
+                elif isinstance(partial, dict):
+                    partial_json = partial
+                elif hasattr(partial, 'partial'):
+                    partial_json = {'partial': str(partial.partial)}
+                else:
+                    partial_json = {'partial': str(partial)}
+
+                return partial_json.get('partial', '').strip()
+            except Exception as e:
+                sherpa_logger.error(f"解析部分结果错误: {e}")
+                # 如果解析失败，尝试直接使用结果
+                return str(partial).strip()
+        except Exception as e:
+            print(f"_parse_partial_result 错误: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return ""
 
 class AudioProcessor(QObject):
     """音频处理器类"""
@@ -245,11 +450,11 @@ class AudioProcessor(QObject):
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
 
-        # 转发信号
-        self.worker.new_text.connect(lambda x: self.new_text_signal.emit(x))
-        self.worker.error.connect(lambda x: self.error_signal.emit(x))
-        self.worker.status.connect(lambda x: self.status_signal.emit(x))
-        self.worker.progress.connect(lambda x, y: self.progress_signal.emit(x, y))
+        # 转发信号到TranscriptionSignals实例
+        self.worker.new_text.connect(lambda x: self.signals.new_text.emit(x))
+        self.worker.error.connect(lambda x: self.signals.error_occurred.emit(x))
+        self.worker.status.connect(lambda x: self.signals.status_updated.emit(x))
+        self.worker.progress.connect(lambda x, y: self.signals.progress_updated.emit(x, y))
 
         # 启动线程
         self.is_capturing = True
@@ -262,23 +467,54 @@ class AudioProcessor(QObject):
         if not self.is_capturing:
             return False
 
-        if hasattr(self, 'worker') and self.worker:
-            self.worker.running = False
+        # 添加安全检查，防止访问已删除的对象
+        try:
+            # 首先设置worker的running标志为False
+            if hasattr(self, 'worker') and self.worker:
+                try:
+                    self.worker.running = False
+                except RuntimeError as e:
+                    # 如果worker对象已被删除，记录错误但继续执行
+                    print(f"警告: 设置worker.running=False时出错: {e}")
 
-        if self.worker_thread:
-            self.worker_thread.quit()
-            self.worker_thread.wait()
+            # 然后尝试停止线程
+            if hasattr(self, 'worker_thread') and self.worker_thread:
+                try:
+                    # 检查线程是否仍在运行
+                    if self.worker_thread.isRunning():
+                        self.worker_thread.quit()
+                        # 设置较短的超时时间，避免长时间等待
+                        if not self.worker_thread.wait(1000):  # 等待最多1秒
+                            print("警告: 线程未能在1秒内停止")
+                except RuntimeError as e:
+                    # 如果线程对象已被删除，记录错误但继续执行
+                    print(f"警告: 停止线程时出错: {e}")
+        except Exception as e:
+            # 捕获所有异常，确保is_capturing标志被重置
+            print(f"停止捕获时发生错误: {e}")
+            import traceback
+            print(traceback.format_exc())
 
+        # 无论如何，确保捕获标志被重置
         self.is_capturing = False
         return True
 
     def _capture_audio_thread(self, recognizer: Any) -> None:
         """
-        音频捕获线程
+        音频捕获线程（已废弃）
+
+        此方法已废弃，请使用AudioWorker类和QThread代替。
+        保留此方法仅为兼容性目的。
 
         Args:
             recognizer: 识别器实例
         """
+        print("警告: _capture_audio_thread方法已废弃，请使用AudioWorker类和QThread")
+        # 使用start_capture方法代替
+        self.start_capture(recognizer)
+        return
+
+        # 以下代码保留但不会执行
         start_time = time.time()
         last_progress_update = time.time()
 

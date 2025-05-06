@@ -328,6 +328,10 @@ class SherpaOnnxASR:
                     )
                     sherpa_logger.info("OnlineRecognizer 实例创建成功")
 
+                    # 添加引擎类型标记
+                    self.engine_type = "sherpa_int8" if self.is_int8 else "sherpa_std"
+                    sherpa_logger.info(f"设置引擎类型: {self.engine_type}")
+
                     # 测试创建流
                     try:
                         test_stream = self.recognizer.create_stream()

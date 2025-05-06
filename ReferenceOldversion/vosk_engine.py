@@ -7,25 +7,21 @@ from vosk import Model, KaldiRecognizer
 
 class VoskASR:
     """VOSK ASR 引擎封装类"""
-
+    
     def __init__(self, model_path: str):
         """初始化 VOSK ASR 引擎
-
+        
         Args:
             model_path: VOSK 模型路径
         """
-        # 直接使用传入的模型路径，不再从config_manager获取
         self.model_path = model_path
         self.model = None
         self.recognizer = None
         self.sample_rate = 16000
-
-        # 自动调用setup方法初始化引擎
-        self.setup()
-
+        
     def setup(self) -> bool:
         """设置 VOSK ASR 引擎
-
+        
         Returns:
             bool: 是否设置成功
         """
@@ -33,50 +29,50 @@ class VoskASR:
             if not os.path.exists(self.model_path):
                 print(f"VOSK model path not found: {self.model_path}")
                 return False
-
+                
             self.model = Model(self.model_path)
             self.recognizer = KaldiRecognizer(self.model, self.sample_rate)
             self.recognizer.SetWords(True)
             return True
-
+            
         except Exception as e:
             print(f"Error setting up VOSK ASR: {str(e)}")
             return False
-
+            
     def transcribe(self, audio_data: Union[bytes, np.ndarray]) -> Optional[str]:
         """转录音频数据
-
+        
         Args:
             audio_data: 音频数据，可以是字节或 numpy 数组
-
+            
         Returns:
             str: 转录文本，如果失败则返回 None
         """
         if not self.recognizer:
             return None
-
+            
         try:
             # 确保音频数据是字节类型
             if isinstance(audio_data, np.ndarray):
                 audio_data = (audio_data * 32767).astype(np.int16).tobytes()
-
+                
             if self.recognizer.AcceptWaveform(audio_data):
                 result = json.loads(self.recognizer.Result())
                 return result.get("text", "")
             return None
-
+            
         except Exception as e:
             print(f"Error in VOSK transcription: {str(e)}")
             return None
-
+            
     def reset(self) -> None:
         """重置识别器状态"""
         if self.recognizer:
             self.recognizer.Reset()
-
+            
     def get_final_result(self) -> Optional[str]:
         """获取最终识别结果
-
+        
         Returns:
             str: 最终识别文本，如果失败则返回 None
         """
@@ -87,66 +83,4 @@ class VoskASR:
             return None
         except Exception as e:
             print(f"Error getting VOSK final result: {str(e)}")
-            return None
-
-    def transcribe_file(self, file_path: str) -> Optional[str]:
-        """转录音频文件
-
-        Args:
-            file_path: 音频文件路径
-
-        Returns:
-            str: 转录文本，如果失败则返回 None
-        """
-        import wave
-
-        try:
-            if not os.path.exists(file_path):
-                print(f"File not found: {file_path}")
-                return None
-
-            # 检查文件是否为WAV格式
-            if not file_path.lower().endswith('.wav'):
-                print(f"File is not a WAV file: {file_path}")
-                # 可以在这里添加转换为WAV格式的代码
-                return None
-
-            # 打开WAV文件
-            with wave.open(file_path, 'rb') as wf:
-                # 检查采样率
-                if wf.getframerate() != self.sample_rate:
-                    print(f"Sample rate mismatch: {wf.getframerate()} != {self.sample_rate}")
-                    # 可以在这里添加重采样的代码
-                    return None
-
-                # 创建新的识别器
-                recognizer = KaldiRecognizer(self.model, self.sample_rate)
-                recognizer.SetWords(True)
-
-                # 读取音频数据并进行识别
-                results = []
-                chunk_size = 4000  # 每次读取的帧数
-
-                while True:
-                    frames = wf.readframes(chunk_size)
-                    if not frames:
-                        break
-
-                    if recognizer.AcceptWaveform(frames):
-                        result = json.loads(recognizer.Result())
-                        if result.get("text", "").strip():
-                            results.append(result.get("text", ""))
-
-                # 获取最终结果
-                final_result = json.loads(recognizer.FinalResult())
-                if final_result.get("text", "").strip():
-                    results.append(final_result.get("text", ""))
-
-                # 合并结果
-                return " ".join(results)
-
-        except Exception as e:
-            print(f"Error in VOSK file transcription: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
             return None
