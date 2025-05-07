@@ -45,6 +45,15 @@ class AudioWorker(QObject):
         self.buffer_size = buffer_size
         self.recognizer = recognizer
         self.running = True
+        self._last_partial_result = ""  # 保存最后一个部分结果
+
+        # 静音检测相关参数
+        self.silence_threshold = 0.01  # 静音阈值
+        self.silence_frames = 0  # 连续静音帧计数
+        self.silence_frames_threshold = 15  # 静音帧阈值（约1.5秒，取决于buffer_size和采样率）
+        self.last_sentence_end_time = time.time()  # 上次句子结束时间
+        self.current_partial_text = ""  # 当前累积的部分文本
+        self.sentence_in_progress = False  # 是否有句子正在进行中
 
         # 尝试初始化COM（在主线程中）
         try:
@@ -116,9 +125,44 @@ class AudioWorker(QObject):
 
                     # 检查音频数据是否有效
                     max_amplitude = np.max(np.abs(data))
-                    if max_amplitude < 0.01:
-                        sherpa_logger.debug(f"音频数据几乎是静音，最大振幅: {max_amplitude}，跳过")
-                        continue
+
+                    # 静音检测
+                    if max_amplitude < self.silence_threshold:
+                        sherpa_logger.debug(f"检测到静音，最大振幅: {max_amplitude}，静音帧计数: {self.silence_frames}")
+                        self.silence_frames += 1
+
+                        # 如果有句子正在进行中，且静音持续足够长时间，认为句子结束
+                        if self.sentence_in_progress and self.silence_frames >= self.silence_frames_threshold:
+                            sherpa_logger.info(f"检测到静音持续{self.silence_frames}帧，判定当前句子结束")
+
+                            # 如果有当前部分文本，将其作为完整句子提交
+                            if self._last_partial_result:
+                                # 格式化文本
+                                text = self._last_partial_result
+                                if len(text) > 0:
+                                    text = text[0].upper() + text[1:]
+                                if text[-1] not in ['.', '?', '!']:
+                                    text += '.'
+
+                                sherpa_logger.info(f"静音检测触发句子结束，发送完整文本: {text}")
+                                self.new_text.emit(text)
+
+                                # 重置状态
+                                self._last_partial_result = ""
+                                self.sentence_in_progress = False
+                                self.last_sentence_end_time = time.time()
+
+                        # 如果静音时间太长，跳过此帧
+                        if self.silence_frames > 2:  # 允许短暂静音
+                            continue
+                    else:
+                        # 如果检测到声音，重置静音计数
+                        if self.silence_frames > 0:
+                            sherpa_logger.debug(f"检测到声音，重置静音帧计数，之前为: {self.silence_frames}")
+                            self.silence_frames = 0
+
+                        # 标记有句子正在进行中
+                        self.sentence_in_progress = True
 
                     try:
                         # 处理音频数据
@@ -158,9 +202,35 @@ class AudioWorker(QObject):
                             text = self._parse_partial_result(partial)
                             sherpa_logger.debug(f"解析后的部分结果: {text}")
 
+                            # 保存最新的部分结果，无论是否发送
                             if text:
-                                sherpa_logger.debug(f"发送部分文本: {text}")
-                                self.new_text.emit("PARTIAL:" + text)
+                                self._last_partial_result = text
+                                print(f"在process中保存最新部分结果: {text}")
+
+                                # 检查是否需要因为静音而结束句子
+                                current_time = time.time()
+                                time_since_last_sentence = current_time - self.last_sentence_end_time
+
+                                # 如果静音持续足够长，且距离上次句子结束已经过了足够时间，认为是新句子
+                                if self.silence_frames >= self.silence_frames_threshold and time_since_last_sentence > 2.0:
+                                    # 格式化文本
+                                    complete_text = text
+                                    if len(complete_text) > 0:
+                                        complete_text = complete_text[0].upper() + complete_text[1:]
+                                    if complete_text[-1] not in ['.', '?', '!']:
+                                        complete_text += '.'
+
+                                    sherpa_logger.info(f"静音检测触发句子结束，发送完整文本: {complete_text}")
+                                    self.new_text.emit(complete_text)
+
+                                    # 重置状态
+                                    self._last_partial_result = ""
+                                    self.sentence_in_progress = False
+                                    self.last_sentence_end_time = current_time
+                                else:
+                                    # 正常发送部分文本
+                                    sherpa_logger.debug(f"发送部分文本: {text}")
+                                    self.new_text.emit("PARTIAL:" + text)
                             else:
                                 sherpa_logger.debug(f"部分文本为空，不发送")
 
@@ -192,6 +262,143 @@ class AudioWorker(QObject):
             sherpa_logger.error(error_trace)
             print(error_trace)
         finally:
+            # 在结束前获取最终结果
+            try:
+                if hasattr(self, 'recognizer') and self.recognizer:
+                    sherpa_logger.info("获取最终识别结果")
+
+                    # 检查引擎类型
+                    engine_type = getattr(self.recognizer, 'engine_type', None)
+                    sherpa_logger.info(f"引擎类型: {engine_type}")
+
+                    # 获取最终结果
+                    if engine_type == "vosk_small" or engine_type == "vosk":
+                        final_result = self.recognizer.FinalResult()
+                        sherpa_logger.info(f"Vosk最终结果: {final_result}")
+
+                        # 解析最终结果
+                        if isinstance(final_result, str):
+                            try:
+                                result_json = json.loads(final_result)
+                                text = result_json.get('text', '').strip()
+                                sherpa_logger.info(f"解析后的最终结果: {text}")
+
+                                # 如果有文本，发送到UI
+                                if text:
+                                    # 格式化文本
+                                    if len(text) > 0:
+                                        text = text[0].upper() + text[1:]
+                                    if text[-1] not in ['.', '?', '!']:
+                                        text += '.'
+                                    sherpa_logger.info(f"发送最终文本: {text}")
+                                    self.new_text.emit(text)
+                                elif hasattr(self, '_last_partial_result') and self._last_partial_result:
+                                    # 如果最终结果为空但有最后一个部分结果，使用部分结果作为最终结果
+                                    text = self._last_partial_result
+                                    # 记录使用的部分结果
+                                    sherpa_logger.info(f"使用的最后一个部分结果原始值: {text}")
+
+                                    # 检查是否是完整的句子（通过检查是否包含"and"等连接词判断）
+                                    # 如果不是完整句子，可能是因为部分结果被截断了
+                                    if text and (" and " in text or text.endswith(" and")):
+                                        # 尝试从完整结果中找到匹配的句子
+                                        # 这里假设完整结果已经在UI中显示
+                                        try:
+                                            from src.ui.main_window import MainWindow
+                                            if hasattr(MainWindow, 'instance') and MainWindow.instance:
+                                                if hasattr(MainWindow.instance, 'subtitle_widget'):
+                                                    subtitle_widget = MainWindow.instance.subtitle_widget
+                                                    if hasattr(subtitle_widget, 'transcript_text') and subtitle_widget.transcript_text:
+                                                        # 查找最近的完整结果中是否包含当前部分结果
+                                                        for complete_text in reversed(subtitle_widget.transcript_text):
+                                                            if text in complete_text:
+                                                                text = complete_text
+                                                                sherpa_logger.info(f"找到匹配的完整结果: {text}")
+                                                                break
+                                        except Exception as e:
+                                            sherpa_logger.error(f"尝试查找完整结果时出错: {e}")
+
+                                    # 格式化文本
+                                    if len(text) > 0:
+                                        text = text[0].upper() + text[1:]
+                                    if text[-1] not in ['.', '?', '!']:
+                                        text += '.'
+                                    sherpa_logger.info(f"使用最后一个部分结果作为最终文本: {text}")
+                                    self.new_text.emit(text)
+                            except json.JSONDecodeError:
+                                sherpa_logger.error(f"解析最终结果JSON失败: {final_result}")
+
+                                # 如果JSON解析失败但有最后一个部分结果，使用部分结果作为最终结果
+                                if hasattr(self, '_last_partial_result') and self._last_partial_result:
+                                    text = self._last_partial_result
+                                    # 格式化文本
+                                    if len(text) > 0:
+                                        text = text[0].upper() + text[1:]
+                                    if text[-1] not in ['.', '?', '!']:
+                                        text += '.'
+                                    sherpa_logger.info(f"JSON解析失败，使用最后一个部分结果作为最终文本: {text}")
+                                    self.new_text.emit(text)
+                    else:
+                        # 对于其他模型，尝试调用FinalResult方法
+                        if hasattr(self.recognizer, 'FinalResult'):
+                            final_result = self.recognizer.FinalResult()
+                            sherpa_logger.info(f"其他模型最终结果: {final_result}")
+
+                            # 如果是字符串，尝试解析
+                            if isinstance(final_result, str):
+                                text = final_result.strip()
+                                if text:
+                                    sherpa_logger.info(f"发送最终文本: {text}")
+                                    self.new_text.emit(text)
+                                elif hasattr(self, '_last_partial_result') and self._last_partial_result:
+                                    # 如果最终结果为空但有最后一个部分结果，使用部分结果作为最终结果
+                                    text = self._last_partial_result
+                                    # 格式化文本
+                                    if len(text) > 0:
+                                        text = text[0].upper() + text[1:]
+                                    if text[-1] not in ['.', '?', '!']:
+                                        text += '.'
+                                    sherpa_logger.info(f"使用最后一个部分结果作为最终文本: {text}")
+                                    self.new_text.emit(text)
+            except Exception as e:
+                sherpa_logger.error(f"获取最终结果错误: {e}")
+                import traceback
+                sherpa_logger.error(traceback.format_exc())
+
+                # 如果获取最终结果失败但有最后一个部分结果，使用部分结果作为最终结果
+                if hasattr(self, '_last_partial_result') and self._last_partial_result:
+                    text = self._last_partial_result
+                    # 记录使用的部分结果
+                    sherpa_logger.info(f"获取最终结果失败，使用的最后一个部分结果原始值: {text}")
+
+                    # 检查是否是完整的句子（通过检查是否包含"and"等连接词判断）
+                    # 如果不是完整句子，可能是因为部分结果被截断了
+                    if text and (" and " in text or text.endswith(" and")):
+                        # 尝试从完整结果中找到匹配的句子
+                        # 这里假设完整结果已经在UI中显示
+                        try:
+                            from src.ui.main_window import MainWindow
+                            if hasattr(MainWindow, 'instance') and MainWindow.instance:
+                                if hasattr(MainWindow.instance, 'subtitle_widget'):
+                                    subtitle_widget = MainWindow.instance.subtitle_widget
+                                    if hasattr(subtitle_widget, 'transcript_text') and subtitle_widget.transcript_text:
+                                        # 查找最近的完整结果中是否包含当前部分结果
+                                        for complete_text in reversed(subtitle_widget.transcript_text):
+                                            if text in complete_text:
+                                                text = complete_text
+                                                sherpa_logger.info(f"找到匹配的完整结果: {text}")
+                                                break
+                        except Exception as e:
+                            sherpa_logger.error(f"尝试查找完整结果时出错: {e}")
+
+                    # 格式化文本
+                    if len(text) > 0:
+                        text = text[0].upper() + text[1:]
+                    if text[-1] not in ['.', '?', '!']:
+                        text += '.'
+                    sherpa_logger.info(f"获取最终结果失败，使用最后一个部分结果作为最终文本: {text}")
+                    self.new_text.emit(text)
+
             sherpa_logger.info("音频处理结束")
             self.finished.emit()
 
@@ -324,21 +531,62 @@ class AudioWorker(QObject):
                         partial_json = json.loads(partial)
                         partial_text = partial_json.get('partial', '').strip()
                         sherpa_logger.debug(f"Vosk JSON解析部分结果: {partial_text}")
+
+                        # 格式化部分文本 - 首字母大写，但不添加句尾标点
+                        if partial_text:
+                            if len(partial_text) > 0:
+                                partial_text = partial_text[0].upper() + partial_text[1:]
+                            sherpa_logger.debug(f"Vosk格式化后的部分结果: {partial_text}")
+
+                        # 保存最新的部分结果，用于后续处理
+                        # 这对于在停止转录时获取最后一个单词特别有用
+                        self._last_partial_result = partial_text
+                        print(f"保存最新部分结果: {partial_text}")  # 添加打印，便于调试
+
                         return partial_text
                     except json.JSONDecodeError:
                         # 如果不是有效的JSON，直接使用文本
                         partial_text = partial.strip()
                         sherpa_logger.debug(f"Vosk非JSON部分结果: {partial_text}")
+
+                        # 格式化部分文本
+                        if partial_text:
+                            if len(partial_text) > 0:
+                                partial_text = partial_text[0].upper() + partial_text[1:]
+
+                        # 保存最新的部分结果
+                        self._last_partial_result = partial_text
+                        print(f"保存最新部分结果(非JSON): {partial_text}")  # 添加打印，便于调试
+
                         return partial_text
                 else:
                     # 如果不是字符串，尝试转换为字符串
                     partial_text = str(partial).strip()
                     sherpa_logger.debug(f"Vosk非字符串部分结果: {partial_text}")
+
+                    # 格式化部分文本
+                    if partial_text:
+                        if len(partial_text) > 0:
+                            partial_text = partial_text[0].upper() + partial_text[1:]
+
+                    # 保存最新的部分结果
+                    self._last_partial_result = partial_text
+
                     return partial_text
 
             # 如果是纯文本字符串（不是 JSON），直接使用
             if isinstance(partial, str) and not partial.startswith('{'):
-                return partial.strip()
+                partial_text = partial.strip()
+
+                # 格式化部分文本
+                if partial_text:
+                    if len(partial_text) > 0:
+                        partial_text = partial_text[0].upper() + partial_text[1:]
+
+                # 保存最新的部分结果
+                self._last_partial_result = partial_text
+
+                return partial_text
 
             # 尝试解析 JSON 或其他格式
             try:
@@ -346,7 +594,17 @@ class AudioWorker(QObject):
                     try:
                         partial_json = json.loads(partial)
                     except json.JSONDecodeError:
-                        return partial.strip()
+                        partial_text = partial.strip()
+
+                        # 格式化部分文本
+                        if partial_text:
+                            if len(partial_text) > 0:
+                                partial_text = partial_text[0].upper() + partial_text[1:]
+
+                        # 保存最新的部分结果
+                        self._last_partial_result = partial_text
+
+                        return partial_text
                 elif isinstance(partial, dict):
                     partial_json = partial
                 elif hasattr(partial, 'partial'):
@@ -354,11 +612,31 @@ class AudioWorker(QObject):
                 else:
                     partial_json = {'partial': str(partial)}
 
-                return partial_json.get('partial', '').strip()
+                partial_text = partial_json.get('partial', '').strip()
+
+                # 格式化部分文本
+                if partial_text:
+                    if len(partial_text) > 0:
+                        partial_text = partial_text[0].upper() + partial_text[1:]
+
+                # 保存最新的部分结果
+                self._last_partial_result = partial_text
+
+                return partial_text
             except Exception as e:
                 sherpa_logger.error(f"解析部分结果错误: {e}")
                 # 如果解析失败，尝试直接使用结果
-                return str(partial).strip()
+                partial_text = str(partial).strip()
+
+                # 格式化部分文本
+                if partial_text:
+                    if len(partial_text) > 0:
+                        partial_text = partial_text[0].upper() + partial_text[1:]
+
+                # 保存最新的部分结果
+                self._last_partial_result = partial_text
+
+                return partial_text
         except Exception as e:
             print(f"_parse_partial_result 错误: {e}")
             import traceback
@@ -467,6 +745,390 @@ class AudioProcessor(QObject):
         if not self.is_capturing:
             return False
 
+        # 导入日志工具
+        try:
+            from src.utils.sherpa_logger import sherpa_logger
+        except ImportError:
+            # 如果导入失败，创建一个简单的日志记录器
+            class DummyLogger:
+                def debug(self, msg): print(f"DEBUG: {msg}")
+                def info(self, msg): print(f"INFO: {msg}")
+                def warning(self, msg): print(f"WARNING: {msg}")
+                def error(self, msg): print(f"ERROR: {msg}")
+            sherpa_logger = DummyLogger()
+
+        # 标记停止状态，防止在停止后继续处理部分结果
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.running = False
+            sherpa_logger.info("已标记工作线程为停止状态")
+
+        # 在停止捕获前，获取最终结果
+        try:
+            if hasattr(self, 'worker') and self.worker and hasattr(self.worker, 'recognizer'):
+                recognizer = self.worker.recognizer
+                sherpa_logger.info("获取最终识别结果")
+
+                # 检查引擎类型
+                engine_type = getattr(recognizer, 'engine_type', None)
+                sherpa_logger.info(f"引擎类型: {engine_type}")
+
+                # 获取最终结果
+                try:
+                    # 对于Vosk模型，调用FinalResult方法
+                    if engine_type == "vosk_small" or engine_type == "vosk":
+                        final_result = recognizer.FinalResult()
+                        sherpa_logger.info(f"Vosk最终结果: {final_result}")
+
+                        # 解析最终结果
+                        if isinstance(final_result, str):
+                            try:
+                                result_json = json.loads(final_result)
+                                text = result_json.get('text', '').strip()
+                                sherpa_logger.info(f"解析后的最终结果: {text}")
+
+                                # 如果有文本，发送到UI
+                                if text:
+                                    # 格式化文本
+                                    if len(text) > 0:
+                                        text = text[0].upper() + text[1:]
+                                    if text[-1] not in ['.', '?', '!']:
+                                        text += '.'
+                                    sherpa_logger.info(f"发送最终文本: {text}")
+                                    self.signals.new_text.emit(text)
+                                elif hasattr(self.worker, '_last_partial_result') and self.worker._last_partial_result:
+                                    # 如果最终结果为空但有最后一个部分结果，使用部分结果作为最终结果
+                                    # 注意：此时self.worker._last_partial_result可能已经是匹配过的完整结果
+                                    # 因为在SubtitleWidget的update_text方法中，我们已经尝试匹配完整结果
+                                    text = self.worker._last_partial_result
+                                    # 记录使用的部分结果
+                                    sherpa_logger.info(f"使用的最后一个部分结果原始值: {text}")
+
+                                    # 尝试查找匹配的完整句子
+                                    try:
+                                        from src.ui.main_window import MainWindow
+                                        if hasattr(MainWindow, 'instance') and MainWindow.instance:
+                                            if hasattr(MainWindow.instance, 'subtitle_widget'):
+                                                subtitle_widget = MainWindow.instance.subtitle_widget
+                                                if hasattr(subtitle_widget, '_find_matching_complete_text'):
+                                                    matched_text = subtitle_widget._find_matching_complete_text(text)
+                                                    if matched_text:
+                                                        sherpa_logger.info(f"找到匹配的完整句子: {matched_text}")
+                                                        text = matched_text
+                                    except Exception as e:
+                                        sherpa_logger.error(f"尝试查找匹配的完整句子时出错: {e}")
+
+                                    # 检查是否是完整的句子（通过检查是否包含"and"等连接词判断）
+                                    # 如果不是完整句子，可能是因为部分结果被截断了
+                                    if text:
+                                        # 尝试从完整结果中找到匹配的句子
+                                        # 这里假设完整结果已经在UI中显示
+                                        try:
+                                            from src.ui.main_window import MainWindow
+                                            if hasattr(MainWindow, 'instance') and MainWindow.instance:
+                                                if hasattr(MainWindow.instance, 'subtitle_widget'):
+                                                    subtitle_widget = MainWindow.instance.subtitle_widget
+                                                    if hasattr(subtitle_widget, 'transcript_text') and subtitle_widget.transcript_text:
+                                                        # 打印完整的transcript_text列表，便于调试
+                                                        sherpa_logger.info(f"当前完整文本列表: {subtitle_widget.transcript_text}")
+
+                                                        # 首先检查是否有以"and"结尾的部分结果
+                                                        if " and " in text or text.endswith(" and"):
+                                                            sherpa_logger.info(f"检测到以'and'结尾的部分结果: {text}")
+                                                            # 特殊处理以"and"结尾的情况
+                                                            for complete_text in reversed(subtitle_widget.transcript_text):
+                                                                # 检查是否有包含相同前缀但更完整的句子
+                                                                if complete_text.startswith(text.rstrip(" and")) and "and " in complete_text:
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(and特殊处理): {text}")
+                                                                    break
+
+                                                        # 如果没有找到匹配，继续使用常规匹配逻辑
+                                                        if text.endswith(" and"):
+                                                            # 查找最近的完整结果中是否包含当前部分结果
+                                                            for complete_text in reversed(subtitle_widget.transcript_text):
+                                                                # 检查部分结果是否是完整结果的前缀（去掉末尾的"and"）
+                                                                prefix = text.rstrip(" and")
+                                                                if prefix and complete_text.startswith(prefix):
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(前缀匹配-去除and): {text}")
+                                                                    break
+
+                                                        # 如果仍然没有找到匹配，使用常规匹配逻辑
+                                                        if text.endswith(" and"):
+                                                            for complete_text in reversed(subtitle_widget.transcript_text):
+                                                                # 检查部分结果（去掉末尾的"and"）是否包含在完整结果中
+                                                                prefix = text.rstrip(" and")
+                                                                if prefix and prefix in complete_text:
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(子串匹配-去除and): {text}")
+                                                                    break
+
+                                                        # 如果仍然没有找到匹配，使用常规匹配逻辑
+                                                        for complete_text in reversed(subtitle_widget.transcript_text):
+                                                            # 检查部分结果是否是完整结果的前缀
+                                                            if complete_text.startswith(text):
+                                                                text = complete_text
+                                                                sherpa_logger.info(f"找到匹配的完整结果(前缀匹配): {text}")
+                                                                break
+                                                            # 检查部分结果是否包含在完整结果中
+                                                            elif text in complete_text:
+                                                                text = complete_text
+                                                                sherpa_logger.info(f"找到匹配的完整结果(子串匹配): {text}")
+                                                                break
+                                                            # 检查完整结果是否包含部分结果的大部分内容
+                                                            elif len(text) > 10:  # 只对较长的部分结果进行相似度检查
+                                                                # 计算部分结果的单词
+                                                                partial_words = text.split()
+                                                                # 计算完整结果的单词
+                                                                complete_words = complete_text.split()
+                                                                # 计算共同单词的数量
+                                                                common_words = set(partial_words) & set(complete_words)
+                                                                # 如果共同单词的数量超过部分结果单词数量的80%，认为匹配
+                                                                if len(common_words) >= 0.8 * len(partial_words):
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(相似度匹配): {text}")
+                                                                    break
+
+                                                                # 如果部分结果以"and"结尾，特殊处理
+                                                                if text.endswith(" and"):
+                                                                    # 计算去掉"and"后的相似度
+                                                                    partial_words_no_and = text.rstrip(" and").split()
+                                                                    if partial_words_no_and:
+                                                                        common_words_no_and = set(partial_words_no_and) & set(complete_words)
+                                                                        if len(common_words_no_and) >= 0.8 * len(partial_words_no_and):
+                                                                            text = complete_text
+                                                                            sherpa_logger.info(f"找到匹配的完整结果(相似度匹配-去除and): {text}")
+                                                                            break
+                                        except Exception as e:
+                                            sherpa_logger.error(f"尝试查找完整结果时出错: {e}")
+
+                                    # 格式化文本
+                                    if len(text) > 0:
+                                        text = text[0].upper() + text[1:]
+                                    if text[-1] not in ['.', '?', '!']:
+                                        text += '.'
+                                    sherpa_logger.info(f"使用最后一个部分结果作为最终文本: {text}")
+                                    self.signals.new_text.emit(text)
+                            except json.JSONDecodeError:
+                                sherpa_logger.error(f"解析最终结果JSON失败: {final_result}")
+
+                                # 如果JSON解析失败但有最后一个部分结果，使用部分结果作为最终结果
+                                if hasattr(self.worker, '_last_partial_result') and self.worker._last_partial_result:
+                                    text = self.worker._last_partial_result
+                                    # 记录使用的部分结果
+                                    sherpa_logger.info(f"JSON解析失败，使用的最后一个部分结果原始值: {text}")
+
+                                    # 检查是否是完整的句子（通过检查是否包含"and"等连接词判断）
+                                    # 如果不是完整句子，可能是因为部分结果被截断了
+                                    if text:
+                                        # 尝试从完整结果中找到匹配的句子
+                                        # 这里假设完整结果已经在UI中显示
+                                        try:
+                                            from src.ui.main_window import MainWindow
+                                            if hasattr(MainWindow, 'instance') and MainWindow.instance:
+                                                if hasattr(MainWindow.instance, 'subtitle_widget'):
+                                                    subtitle_widget = MainWindow.instance.subtitle_widget
+                                                    if hasattr(subtitle_widget, 'transcript_text') and subtitle_widget.transcript_text:
+                                                        # 打印完整的transcript_text列表，便于调试
+                                                        sherpa_logger.info(f"当前完整文本列表: {subtitle_widget.transcript_text}")
+
+                                                        # 首先检查是否有以"and"结尾的部分结果
+                                                        if " and " in text or text.endswith(" and"):
+                                                            sherpa_logger.info(f"检测到以'and'结尾的部分结果: {text}")
+                                                            # 特殊处理以"and"结尾的情况
+                                                            for complete_text in reversed(subtitle_widget.transcript_text):
+                                                                # 检查是否有包含相同前缀但更完整的句子
+                                                                if complete_text.startswith(text.rstrip(" and")) and "and " in complete_text:
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(and特殊处理): {text}")
+                                                                    break
+
+                                                        # 如果没有找到匹配，继续使用常规匹配逻辑
+                                                        if text.endswith(" and"):
+                                                            # 查找最近的完整结果中是否包含当前部分结果
+                                                            for complete_text in reversed(subtitle_widget.transcript_text):
+                                                                # 检查部分结果是否是完整结果的前缀（去掉末尾的"and"）
+                                                                prefix = text.rstrip(" and")
+                                                                if prefix and complete_text.startswith(prefix):
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(前缀匹配-去除and): {text}")
+                                                                    break
+
+                                                        # 如果仍然没有找到匹配，使用常规匹配逻辑
+                                                        if text.endswith(" and"):
+                                                            for complete_text in reversed(subtitle_widget.transcript_text):
+                                                                # 检查部分结果（去掉末尾的"and"）是否包含在完整结果中
+                                                                prefix = text.rstrip(" and")
+                                                                if prefix and prefix in complete_text:
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(子串匹配-去除and): {text}")
+                                                                    break
+
+                                                        # 如果仍然没有找到匹配，使用常规匹配逻辑
+                                                        for complete_text in reversed(subtitle_widget.transcript_text):
+                                                            # 检查部分结果是否是完整结果的前缀
+                                                            if complete_text.startswith(text):
+                                                                text = complete_text
+                                                                sherpa_logger.info(f"找到匹配的完整结果(前缀匹配): {text}")
+                                                                break
+                                                            # 检查部分结果是否包含在完整结果中
+                                                            elif text in complete_text:
+                                                                text = complete_text
+                                                                sherpa_logger.info(f"找到匹配的完整结果(子串匹配): {text}")
+                                                                break
+                                                            # 检查完整结果是否包含部分结果的大部分内容
+                                                            elif len(text) > 10:  # 只对较长的部分结果进行相似度检查
+                                                                # 计算部分结果的单词
+                                                                partial_words = text.split()
+                                                                # 计算完整结果的单词
+                                                                complete_words = complete_text.split()
+                                                                # 计算共同单词的数量
+                                                                common_words = set(partial_words) & set(complete_words)
+                                                                # 如果共同单词的数量超过部分结果单词数量的80%，认为匹配
+                                                                if len(common_words) >= 0.8 * len(partial_words):
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(相似度匹配): {text}")
+                                                                    break
+
+                                                                # 如果部分结果以"and"结尾，特殊处理
+                                                                if text.endswith(" and"):
+                                                                    # 计算去掉"and"后的相似度
+                                                                    partial_words_no_and = text.rstrip(" and").split()
+                                                                    if partial_words_no_and:
+                                                                        common_words_no_and = set(partial_words_no_and) & set(complete_words)
+                                                                        if len(common_words_no_and) >= 0.8 * len(partial_words_no_and):
+                                                                            text = complete_text
+                                                                            sherpa_logger.info(f"找到匹配的完整结果(相似度匹配-去除and): {text}")
+                                                                            break
+                                        except Exception as e:
+                                            sherpa_logger.error(f"尝试查找完整结果时出错: {e}")
+
+                                    # 格式化文本
+                                    if len(text) > 0:
+                                        text = text[0].upper() + text[1:]
+                                    if text[-1] not in ['.', '?', '!']:
+                                        text += '.'
+                                    sherpa_logger.info(f"JSON解析失败，使用最后一个部分结果作为最终文本: {text}")
+                                    self.signals.new_text.emit(text)
+                    else:
+                        # 对于其他模型，尝试调用FinalResult方法
+                        if hasattr(recognizer, 'FinalResult'):
+                            final_result = recognizer.FinalResult()
+                            sherpa_logger.info(f"其他模型最终结果: {final_result}")
+
+                            # 如果是字符串，尝试解析
+                            if isinstance(final_result, str):
+                                text = final_result.strip()
+                                if text:
+                                    sherpa_logger.info(f"发送最终文本: {text}")
+                                    self.signals.new_text.emit(text)
+                                elif hasattr(self.worker, '_last_partial_result') and self.worker._last_partial_result:
+                                    # 如果最终结果为空但有最后一个部分结果，使用部分结果作为最终结果
+                                    text = self.worker._last_partial_result
+                                    # 记录使用的部分结果
+                                    sherpa_logger.info(f"其他模型使用的最后一个部分结果原始值: {text}")
+
+                                    # 检查是否是完整的句子（通过检查是否包含"and"等连接词判断）
+                                    # 如果不是完整句子，可能是因为部分结果被截断了
+                                    if text:
+                                        # 尝试从完整结果中找到匹配的句子
+                                        # 这里假设完整结果已经在UI中显示
+                                        try:
+                                            from src.ui.main_window import MainWindow
+                                            if hasattr(MainWindow, 'instance') and MainWindow.instance:
+                                                if hasattr(MainWindow.instance, 'subtitle_widget'):
+                                                    subtitle_widget = MainWindow.instance.subtitle_widget
+                                                    if hasattr(subtitle_widget, 'transcript_text') and subtitle_widget.transcript_text:
+                                                        # 打印完整的transcript_text列表，便于调试
+                                                        sherpa_logger.info(f"当前完整文本列表: {subtitle_widget.transcript_text}")
+
+                                                        # 首先检查是否有以"and"结尾的部分结果
+                                                        if " and " in text or text.endswith(" and"):
+                                                            sherpa_logger.info(f"检测到以'and'结尾的部分结果: {text}")
+                                                            # 特殊处理以"and"结尾的情况
+                                                            for complete_text in reversed(subtitle_widget.transcript_text):
+                                                                # 检查是否有包含相同前缀但更完整的句子
+                                                                if complete_text.startswith(text.rstrip(" and")) and "and " in complete_text:
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(and特殊处理): {text}")
+                                                                    break
+
+                                                        # 如果没有找到匹配，继续使用常规匹配逻辑
+                                                        if text.endswith(" and"):
+                                                            # 查找最近的完整结果中是否包含当前部分结果
+                                                            for complete_text in reversed(subtitle_widget.transcript_text):
+                                                                # 检查部分结果是否是完整结果的前缀（去掉末尾的"and"）
+                                                                prefix = text.rstrip(" and")
+                                                                if prefix and complete_text.startswith(prefix):
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(前缀匹配-去除and): {text}")
+                                                                    break
+
+                                                        # 如果仍然没有找到匹配，使用常规匹配逻辑
+                                                        if text.endswith(" and"):
+                                                            for complete_text in reversed(subtitle_widget.transcript_text):
+                                                                # 检查部分结果（去掉末尾的"and"）是否包含在完整结果中
+                                                                prefix = text.rstrip(" and")
+                                                                if prefix and prefix in complete_text:
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(子串匹配-去除and): {text}")
+                                                                    break
+
+                                                        # 如果仍然没有找到匹配，使用常规匹配逻辑
+                                                        for complete_text in reversed(subtitle_widget.transcript_text):
+                                                            # 检查部分结果是否是完整结果的前缀
+                                                            if complete_text.startswith(text):
+                                                                text = complete_text
+                                                                sherpa_logger.info(f"找到匹配的完整结果(前缀匹配): {text}")
+                                                                break
+                                                            # 检查部分结果是否包含在完整结果中
+                                                            elif text in complete_text:
+                                                                text = complete_text
+                                                                sherpa_logger.info(f"找到匹配的完整结果(子串匹配): {text}")
+                                                                break
+                                                            # 检查完整结果是否包含部分结果的大部分内容
+                                                            elif len(text) > 10:  # 只对较长的部分结果进行相似度检查
+                                                                # 计算部分结果的单词
+                                                                partial_words = text.split()
+                                                                # 计算完整结果的单词
+                                                                complete_words = complete_text.split()
+                                                                # 计算共同单词的数量
+                                                                common_words = set(partial_words) & set(complete_words)
+                                                                # 如果共同单词的数量超过部分结果单词数量的80%，认为匹配
+                                                                if len(common_words) >= 0.8 * len(partial_words):
+                                                                    text = complete_text
+                                                                    sherpa_logger.info(f"找到匹配的完整结果(相似度匹配): {text}")
+                                                                    break
+
+                                                                # 如果部分结果以"and"结尾，特殊处理
+                                                                if text.endswith(" and"):
+                                                                    # 计算去掉"and"后的相似度
+                                                                    partial_words_no_and = text.rstrip(" and").split()
+                                                                    if partial_words_no_and:
+                                                                        common_words_no_and = set(partial_words_no_and) & set(complete_words)
+                                                                        if len(common_words_no_and) >= 0.8 * len(partial_words_no_and):
+                                                                            text = complete_text
+                                                                            sherpa_logger.info(f"找到匹配的完整结果(相似度匹配-去除and): {text}")
+                                                                            break
+                                        except Exception as e:
+                                            sherpa_logger.error(f"尝试查找完整结果时出错: {e}")
+
+                                    # 格式化文本
+                                    if len(text) > 0:
+                                        text = text[0].upper() + text[1:]
+                                    if text[-1] not in ['.', '?', '!']:
+                                        text += '.'
+                                    sherpa_logger.info(f"使用最后一个部分结果作为最终文本: {text}")
+                                    self.signals.new_text.emit(text)
+                except Exception as e:
+                    sherpa_logger.error(f"获取最终结果错误: {e}")
+                    import traceback
+                    sherpa_logger.error(traceback.format_exc())
+        except Exception as e:
+            sherpa_logger.error(f"处理最终结果时发生错误: {e}")
+            import traceback
+            sherpa_logger.error(traceback.format_exc())
+
         # 添加安全检查，防止访问已删除的对象
         try:
             # 首先设置worker的running标志为False
@@ -475,7 +1137,7 @@ class AudioProcessor(QObject):
                     self.worker.running = False
                 except RuntimeError as e:
                     # 如果worker对象已被删除，记录错误但继续执行
-                    print(f"警告: 设置worker.running=False时出错: {e}")
+                    sherpa_logger.warning(f"警告: 设置worker.running=False时出错: {e}")
 
             # 然后尝试停止线程
             if hasattr(self, 'worker_thread') and self.worker_thread:
@@ -485,15 +1147,15 @@ class AudioProcessor(QObject):
                         self.worker_thread.quit()
                         # 设置较短的超时时间，避免长时间等待
                         if not self.worker_thread.wait(1000):  # 等待最多1秒
-                            print("警告: 线程未能在1秒内停止")
+                            sherpa_logger.warning("警告: 线程未能在1秒内停止")
                 except RuntimeError as e:
                     # 如果线程对象已被删除，记录错误但继续执行
-                    print(f"警告: 停止线程时出错: {e}")
+                    sherpa_logger.warning(f"警告: 停止线程时出错: {e}")
         except Exception as e:
             # 捕获所有异常，确保is_capturing标志被重置
-            print(f"停止捕获时发生错误: {e}")
+            sherpa_logger.error(f"停止捕获时发生错误: {e}")
             import traceback
-            print(traceback.format_exc())
+            sherpa_logger.error(traceback.format_exc())
 
         # 无论如何，确保捕获标志被重置
         self.is_capturing = False

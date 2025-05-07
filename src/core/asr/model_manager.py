@@ -3,7 +3,6 @@ ASR模型管理模块
 负责加载和管理ASR模型
 """
 import os
-import json
 import logging
 import traceback
 import numpy as np
@@ -83,7 +82,7 @@ class ASRModelManager(QObject):
         self.model_path = None
 
         # 从配置文件获取默认模型类型
-        self.model_type = self.config.config.get('transcription', {}).get('default_model', 'sherpa_0626')
+        self.model_type = self.config.config.get('transcription', {}).get('default_model', 'vosk_small')
         logger.info(f"使用默认模型类型: {self.model_type}")
 
         # 用于音频转录的引擎
@@ -105,85 +104,80 @@ class ASRModelManager(QObject):
             bool: 验证是否通过
         """
         try:
-            # 如果没有传入model_type，则使用self.model_type
             if model_type is None:
                 model_type = self.model_type
 
-            # 根据模型路径判断是否为Vosk模型
-            is_vosk_model = "vosk" in model_path.lower() or model_type == "vosk_small"
+            logger.info(f"验证模型文件: {model_path}, 类型: {model_type}")
+
+            # 检查基本路径
+            if not os.path.exists(model_path):
+                logger.error(f"模型路径不存在: {model_path}")
+                return False
 
             # 根据模型类型选择不同的验证方式
-            if is_vosk_model:
-                # Vosk模型只需要检查目录是否存在
+            if model_type == "vosk_small" or "vosk" in model_path.lower():
+                # Vosk模型验证：检查目录是否存在以及是否包含必要的子目录和文件
                 if os.path.exists(model_path) and os.path.isdir(model_path):
-                    logger.info(f"Vosk模型目录验证通过: {model_path}")
-                    return True
-                else:
-                    logger.error(f"Vosk模型目录不存在或不是目录: {model_path}")
+                    # 检查am子目录是否存在
+                    am_dir = os.path.join(model_path, "am")
+                    if os.path.exists(am_dir) and os.path.isdir(am_dir):
+                        # 检查final.mdl文件是否存在于am子目录中
+                        final_mdl = os.path.join(am_dir, "final.mdl")
+                        if os.path.exists(final_mdl):
+                            logger.info(f"Vosk模型验证通过: {model_path}")
+                            return True
+                        logger.error(f"Vosk模型缺少必要文件 am/final.mdl: {model_path}")
+                        return False
+                    logger.error(f"Vosk模型缺少必要目录 am: {model_path}")
                     return False
-            elif model_type.startswith("sherpa"):
-                # 获取模型配置
+                logger.error(f"Vosk模型目录无效: {model_path}")
+                return False
+
+            # Sherpa模型验证逻辑
+            elif model_type and model_type.startswith('sherpa'):
                 model_config = self.models_config.get(model_type, {})
-
-                # 确定模型类型和文件名
-                config_model_type = model_config.get("type", "int8").lower()
-                model_name = model_config.get("name", "")
-
-                # 确定是否使用int8模型和是否是0626模型
+                config_model_type = model_config.get("type", "standard").lower()
                 is_int8 = config_model_type == "int8"
-                is_0626 = "0626" in model_name or "2023-06-26" in model_path
+                is_0626 = "0626" in model_type
 
-                # 根据模型类型选择不同的文件名
+                # 根据模型类型选择文件名
                 if is_0626:
-                    # 针对sherpa_0626模型的具体文件名
-                    required_files = [
-                        "encoder-epoch-99-avg-1-chunk-16-left-128.onnx",
-                        "decoder-epoch-99-avg-1-chunk-16-left-128.onnx",
-                        "joiner-epoch-99-avg-1-chunk-16-left-128.onnx",
-                        "tokens.txt"
-                    ]
+                    base_names = ["encoder", "decoder", "joiner"]
+                    required_files = []
+                    for base in base_names:
+                        suffix = "-epoch-99-avg-1-chunk-16-left-128"
+                        if is_int8:
+                            required_files.append(f"{base}{suffix}.int8.onnx")
+                        else:
+                            required_files.append(f"{base}{suffix}.onnx")
+                    required_files.append("tokens.txt")
                 else:
-                    # 针对其他Sherpa模型的具体文件名
-                    required_files = [
-                        "encoder-epoch-99-avg-1.int8.onnx" if is_int8 else "encoder-epoch-99-avg-1.onnx",
-                        "decoder-epoch-99-avg-1.int8.onnx" if is_int8 else "decoder-epoch-99-avg-1.onnx",
-                        "joiner-epoch-99-avg-1.int8.onnx" if is_int8 else "joiner-epoch-99-avg-1.onnx",
-                        "tokens.txt"
-                    ]
+                    base_names = ["encoder", "decoder", "joiner"]
+                    required_files = []
+                    for base in base_names:
+                        if is_int8:
+                            required_files.append(f"{base}-epoch-99-avg-1.int8.onnx")
+                        else:
+                            required_files.append(f"{base}-epoch-99-avg-1.onnx")
+                    required_files.append("tokens.txt")
 
-                # 检查每个文件是否存在
+                # 验证所有必需文件
                 for file in required_files:
                     file_path = os.path.join(model_path, file)
                     if not os.path.exists(file_path):
                         logger.error(f"模型文件不存在: {file_path}")
                         return False
+                    logger.debug(f"找到模型文件: {file_path}")
 
                 logger.info(f"Sherpa模型文件验证通过: {model_path}")
                 return True
-            else:
-                # 未知模型类型，尝试检测模型类型
-                if "vosk" in model_path.lower():
-                    # 可能是Vosk模型
-                    if os.path.exists(model_path) and os.path.isdir(model_path):
-                        logger.info(f"检测到Vosk模型目录: {model_path}")
-                        return True
-                elif "sherpa" in model_path.lower() or "onnx" in model_path.lower():
-                    # 可能是Sherpa模型，但无法确定具体类型，只检查目录是否存在
-                    if os.path.exists(model_path) and os.path.isdir(model_path):
-                        logger.info(f"检测到可能的Sherpa模型目录: {model_path}")
-                        return True
 
-                # 如果无法确定模型类型，只检查目录是否存在
-                if os.path.exists(model_path) and os.path.isdir(model_path):
-                    logger.info(f"模型目录存在: {model_path}")
-                    return True
-                else:
-                    logger.error(f"模型目录不存在或不是目录: {model_path}")
-                    return False
+            else:
+                logger.error(f"不支持的模型类型: {model_type}")
+                return False
 
         except Exception as e:
             logger.error(f"验证模型文件时发生错误: {str(e)}")
-            import traceback
             logger.error(traceback.format_exc())
             return False
 
@@ -420,60 +414,51 @@ class ASRModelManager(QObject):
             if model_type is None:
                 model_type = self.model_type
 
-            # 根据模型路径判断是否为Vosk模型
-            is_vosk_model = "vosk" in model_path.lower() or model_type == "vosk_small"
-
-            # 根据模型类型选择不同的验证方式
-            if is_vosk_model:
-                # Vosk模型只需要检查目录是否存在
+            # VOSK模型验证
+            if model_type == "vosk_small":
                 if os.path.exists(model_path) and os.path.isdir(model_path):
-                    # 检查是否存在 model 文件夹，这是 Vosk 模型的特征
-                    model_folder = os.path.join(model_path, "model")
-                    if os.path.exists(model_folder) and os.path.isdir(model_folder):
-                        logger.info(f"Vosk模型目录验证通过: {model_path}")
-                        return True
-                    else:
-                        # 检查是否存在 final.mdl 文件，这也是 Vosk 模型的特征
-                        final_mdl = os.path.join(model_path, "final.mdl")
+                    # 检查am子目录是否存在
+                    am_dir = os.path.join(model_path, "am")
+                    if os.path.exists(am_dir) and os.path.isdir(am_dir):
+                        # 检查final.mdl文件是否存在于am子目录中
+                        final_mdl = os.path.join(am_dir, "final.mdl")
                         if os.path.exists(final_mdl):
-                            logger.info(f"Vosk模型目录验证通过: {model_path}")
+                            logger.info(f"Vosk模型验证通过: {model_path}")
                             return True
-                        else:
-                            # 对于Vosk模型，只要目录存在就认为验证通过
-                            logger.info(f"Vosk模型目录存在: {model_path}")
-                            return True
-                else:
-                    logger.error(f"Vosk模型目录不存在或不是目录: {model_path}")
+                        logger.error(f"Vosk模型缺少必要文件 am/final.mdl: {model_path}")
+                        return False
+                    logger.error(f"Vosk模型缺少必要目录 am: {model_path}")
                     return False
+                logger.error(f"Vosk模型目录无效: {model_path}")
+                return False
+
+            # Sherpa模型验证
             elif model_type and model_type.startswith('sherpa'):
-                # 获取模型配置
                 model_config = self.models_config.get(model_type, {})
-
-                # 确定模型类型和文件名
-                config_model_type = model_config.get("type", "int8").lower()
-                model_name = model_config.get("name", "")
-
-                # 确定是否使用int8模型和是否是0626模型
+                config_model_type = model_config.get("type", "standard").lower()
                 is_int8 = config_model_type == "int8"
-                is_0626 = "0626" in model_name or "2023-06-26" in model_path
+                is_0626 = "0626" in model_type
 
-                # 根据模型类型选择不同的文件名
+                # 根据模型类型选择文件名
                 if is_0626:
-                    # 针对sherpa_0626模型的具体文件名
-                    required_files = [
-                        "encoder-epoch-99-avg-1-chunk-16-left-128.onnx" if not is_int8 else "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-                        "decoder-epoch-99-avg-1-chunk-16-left-128.onnx" if not is_int8 else "decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-                        "joiner-epoch-99-avg-1-chunk-16-left-128.onnx" if not is_int8 else "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-                        "tokens.txt"
-                    ]
+                    base_names = ["encoder", "decoder", "joiner"]
+                    required_files = []
+                    for base in base_names:
+                        suffix = "-epoch-99-avg-1-chunk-16-left-128"
+                        if is_int8:
+                            required_files.append(f"{base}{suffix}.int8.onnx")
+                        else:
+                            required_files.append(f"{base}{suffix}.onnx")
+                    required_files.append("tokens.txt")
                 else:
-                    # 针对其他Sherpa模型的具体文件名
-                    required_files = [
-                        "encoder-epoch-99-avg-1.int8.onnx" if is_int8 else "encoder-epoch-99-avg-1.onnx",
-                        "decoder-epoch-99-avg-1.int8.onnx" if is_int8 else "decoder-epoch-99-avg-1.onnx",
-                        "joiner-epoch-99-avg-1.int8.onnx" if is_int8 else "joiner-epoch-99-avg-1.onnx",
-                        "tokens.txt"
-                    ]
+                    base_names = ["encoder", "decoder", "joiner"]
+                    required_files = []
+                    for base in base_names:
+                        if is_int8:
+                            required_files.append(f"{base}-epoch-99-avg-1.int8.onnx")
+                        else:
+                            required_files.append(f"{base}-epoch-99-avg-1.onnx")
+                    required_files.append("tokens.txt")
 
                 # 检查每个文件是否存在
                 for file in required_files:
@@ -484,26 +469,10 @@ class ASRModelManager(QObject):
 
                 logger.info(f"Sherpa模型文件验证通过: {model_path}")
                 return True
-            else:
-                # 未知模型类型，尝试检测模型类型
-                if "vosk" in model_path.lower():
-                    # 可能是Vosk模型
-                    if os.path.exists(model_path) and os.path.isdir(model_path):
-                        logger.info(f"检测到Vosk模型目录: {model_path}")
-                        return True
-                elif "sherpa" in model_path.lower() or "onnx" in model_path.lower():
-                    # 可能是Sherpa模型，但无法确定具体类型，只检查目录是否存在
-                    if os.path.exists(model_path) and os.path.isdir(model_path):
-                        logger.info(f"检测到可能的Sherpa模型目录: {model_path}")
-                        return True
 
-                # 如果无法确定模型类型，只检查目录是否存在
-                if os.path.exists(model_path) and os.path.isdir(model_path):
-                    logger.info(f"模型目录存在: {model_path}")
-                    return True
-                else:
-                    logger.error(f"模型目录不存在或不是目录: {model_path}")
-                    return False
+            else:
+                logger.error(f"不支持的模型类型: {model_type}")
+                return False
 
         except Exception as e:
             logger.error(f"验证模型路径时发生错误: {str(e)}")
@@ -512,580 +481,35 @@ class ASRModelManager(QObject):
             return False
 
     def create_recognizer(self) -> Optional[Any]:
-        """
-        创建识别器
-
-        Returns:
-            Optional[Any]: 识别器实例
-        """
-        try:
-            # 导入 Sherpa-ONNX 日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，创建一个简单的日志记录器
-                class DummyLogger:
-                    def debug(self, msg): print(f"DEBUG: {msg}")
-                    def info(self, msg): print(f"INFO: {msg}")
-                    def warning(self, msg): print(f"WARNING: {msg}")
-                    def error(self, msg): print(f"ERROR: {msg}")
-                sherpa_logger = DummyLogger()
-
-            # 检查当前模型是否已加载
-            if self.current_model is None:
-                logger.error("当前模型未加载，请先加载模型")
-                sherpa_logger.error("当前模型未加载，请先加载模型")
-                return None
-
-            # 检查模型配置
-            model_config = self.models_config.get(self.model_type, {})
-            if not model_config:
-                logger.error(f"模型配置 {self.model_type} 不存在")
-                sherpa_logger.error(f"模型配置 {self.model_type} 不存在")
-                return None
-
-            # 检查模型路径
-            model_path = model_config.get('path', '')
-            if not os.path.exists(model_path):
-                logger.error(f"模型路径不存在: {model_path}")
-                sherpa_logger.error(f"模型路径不存在: {model_path}")
-                return None
-
-            # 获取当前引擎类型
-            engine_type = self.get_current_engine_type()
-            sherpa_logger.info(f"创建识别器，当前引擎类型: {engine_type}")
-
-            # 检查当前引擎是否已初始化
-            if not self.current_engine:
-                sherpa_logger.error("当前引擎未初始化，尝试初始化...")
-                if not self.initialize_engine(self.model_type):
-                    sherpa_logger.error(f"初始化引擎 {self.model_type} 失败")
-                    return None
-                sherpa_logger.info("引擎初始化成功")
-
-            # 根据引擎类型创建识别器
-            if engine_type == "vosk" or engine_type == "vosk_small":
-                # 对于Vosk模型，返回VoskRecognizer实例
-                sherpa_logger.info(f"创建Vosk识别器，引擎类型: {engine_type}")
-                model = vosk.Model(model_path)
-                recognizer = vosk.KaldiRecognizer(model, 16000)
-                recognizer.engine_type = engine_type  # 添加引擎类型标记，保持与模型类型一致
-                sherpa_logger.info(f"Vosk识别器创建成功，引擎类型: {engine_type}")
-                return recognizer
-            elif engine_type and engine_type.startswith("sherpa"):
-                # 对于Sherpa-ONNX模型，创建SherpaRecognizer适配器类
-                sherpa_logger.info(f"创建SherpaRecognizer适配器，引擎类型: {engine_type}")
-
-                # 创建包装器，使其接口与Vosk兼容
-                class SherpaRecognizer:
-                    def __init__(self, model):
-                        """
-                        初始化SherpaRecognizer
-
-                        这是一个适配器类，使Sherpa-ONNX模型的接口与Vosk兼容。
-                        它实现了与VoskRecognizer相同的方法（AcceptWaveform, Result, PartialResult, FinalResult, Reset），
-                        但内部使用Sherpa-ONNX的API。
-
-                        Args:
-                            model: Sherpa-ONNX模型实例
-                        """
-                        self.model = model
-                        self.partial_result = ""  # 存储部分识别结果，用于PartialResult方法返回
-                        self.final_result = ""    # 存储最终识别结果，用于Result方法返回
-                        self.previous_result = "" # 存储上一次的完整识别结果，用于文本增量检测
-                        self.current_text = ""    # 存储当前累积的完整文本，用于连续识别
-                        self.logger = sherpa_logger
-                        self.engine_type = engine_type  # 存储引擎类型
-
-                        # 添加累积文本功能
-                        self.accumulated_text = []  # 存储所有完整的转录文本，用于保存完整历史
-
-                        # 创建流
-                        try:
-                            self.current_stream = self.model.recognizer.create_stream()
-                            self.logger.info("成功创建初始流")
-                        except Exception as e:
-                            self.logger.error(f"创建初始流失败: {e}")
-                            import traceback
-                            self.logger.error(traceback.format_exc())
-                            self.current_stream = None
-
-                    def AcceptWaveform(self, audio_data):
-                        """
-                        处理音频数据
-
-                        Args:
-                            audio_data: 音频数据，可以是字节或numpy数组
-
-                        Returns:
-                            bool: 是否有完整的识别结果
-                        """
-                        try:
-                            # 检查模型和流是否已初始化
-                            if not self.model or not self.model.recognizer:
-                                self.logger.error("模型或识别器未初始化")
-                                print("[ERROR] 模型或识别器未初始化")
-                                return False
-
-                            # 如果流未初始化，创建新的流
-                            if not hasattr(self, 'current_stream') or self.current_stream is None:
-                                try:
-                                    self.current_stream = self.model.recognizer.create_stream()
-                                    self.logger.info("创建新的流")
-                                    print("[INFO] 创建新的流")
-                                except Exception as e:
-                                    self.logger.error(f"创建流失败: {e}")
-                                    print(f"[ERROR] 创建流失败: {e}")
-                                    import traceback
-                                    error_trace = traceback.format_exc()
-                                    self.logger.error(error_trace)
-                                    print(error_trace)
-                                    return False
-
-                            # 处理音频数据
-                            try:
-                                # 确保音频数据是numpy数组
-                                if isinstance(audio_data, bytes):
-                                    # 将字节转换为16位整数数组
-                                    import array
-                                    audio_array = array.array('h', audio_data)
-                                    audio_data = np.array(audio_array, dtype=np.float32) / 32768.0
-                                    self.logger.debug(f"将字节转换为numpy数组，形状: {audio_data.shape}")
-                                    print(f"[DEBUG] 将字节转换为numpy数组，形状: {audio_data.shape}")
-
-                                # 确保音频数据是单声道
-                                if len(audio_data.shape) > 1:
-                                    audio_data = np.mean(audio_data, axis=1)
-                                    self.logger.debug(f"将多声道转换为单声道，形状: {audio_data.shape}")
-                                    print(f"[DEBUG] 将多声道转换为单声道，形状: {audio_data.shape}")
-
-                                # 检查音频数据是否有效
-                                max_amplitude = np.max(np.abs(audio_data))
-                                if max_amplitude < 0.01:
-                                    self.logger.debug(f"音频数据几乎是静音，最大振幅: {max_amplitude}，跳过")
-                                    print(f"[DEBUG] 音频数据几乎是静音，最大振幅: {max_amplitude}，跳过")
-                                    return False
-
-                                # 接受音频数据
-                                self.logger.debug(f"接受音频数据，形状: {audio_data.shape}, 最大值: {max_amplitude}")
-                                print(f"[DEBUG] 接受音频数据，形状: {audio_data.shape}, 最大值: {max_amplitude}")
-                                print(f"[DEBUG] 音频数据类型: {type(audio_data)}, 数据类型: {audio_data.dtype}")
-                                print(f"[DEBUG] 音频数据样本: {audio_data[:10]}")  # 打印前10个样本
-                                print(f"[DEBUG] 模型采样率: {self.model.sample_rate}")
-
-                                try:
-                                    self.current_stream.accept_waveform(self.model.sample_rate, audio_data)
-                                    self.logger.debug("音频数据接受成功")
-                                    print("[DEBUG] 音频数据接受成功")
-                                except Exception as e:
-                                    self.logger.error(f"接受音频数据错误: {e}")
-                                    print(f"[ERROR] 接受音频数据错误: {e}")
-                                    import traceback
-                                    error_trace = traceback.format_exc()
-                                    self.logger.error(error_trace)
-                                    print(error_trace)
-                                    return False
-
-                                # 解码
-                                try:
-                                    decode_count = 0
-                                    while self.model.recognizer.is_ready(self.current_stream):
-                                        self.model.recognizer.decode_stream(self.current_stream)
-                                        decode_count += 1
-                                    self.logger.debug(f"解码完成，执行了 {decode_count} 次解码")
-                                    print(f"[DEBUG] 解码完成，执行了 {decode_count} 次解码")
-                                except Exception as e:
-                                    self.logger.error(f"解码错误: {e}")
-                                    print(f"[ERROR] 解码错误: {e}")
-                                    import traceback
-                                    error_trace = traceback.format_exc()
-                                    self.logger.error(error_trace)
-                                    print(error_trace)
-                                    return False
-
-                                # 获取当前结果
-                                try:
-                                    result = self.model.recognizer.get_result(self.current_stream)
-                                    has_result = bool(result and result.strip())
-                                    self.logger.debug(f"当前结果: {result}, 是否有结果: {has_result}")
-                                    print(f"[DEBUG] 当前结果: {result}, 是否有结果: {has_result}")
-                                except Exception as e:
-                                    self.logger.error(f"获取结果错误: {e}")
-                                    print(f"[ERROR] 获取结果错误: {e}")
-                                    import traceback
-                                    error_trace = traceback.format_exc()
-                                    self.logger.error(error_trace)
-                                    print(error_trace)
-                                    return False
-
-                                # 如果有结果，保存为最终结果
-                                if has_result:
-                                    # 使用正则表达式处理结果，确保每个句子以句号结尾
-                                    import re
-                                    result = re.sub(r'(?<=[a-zA-Z0-9])(?=[A-Z])', '. ', result)
-                                    result = re.sub(r'\s+$', '', result)  # 去除末尾空格
-                                    if not result.endswith('.'):
-                                        result += '.'  # 确保结果以句号结尾
-
-                                    # 首字母大写
-                                    if result and len(result) > 0:
-                                        result = result[0].upper() + result[1:]
-
-                                    self.final_result = result
-
-                                    # 检查是否是新的结果
-                                    if self.final_result != self.previous_result:
-                                        self.previous_result = self.final_result
-                                        self.accumulated_text.append(self.final_result)
-                                        self.logger.info(f"新的完整结果: {self.final_result}")
-                                        print(f"[INFO] 新的完整结果: {self.final_result}")
-                                        return True
-
-                                return False
-
-                            except Exception as e:
-                                self.logger.error(f"处理音频数据错误: {e}")
-                                print(f"[ERROR] 处理音频数据错误: {e}")
-                                import traceback
-                                error_trace = traceback.format_exc()
-                                self.logger.error(error_trace)
-                                print(error_trace)
-                                return False
-
-                        except Exception as e:
-                            self.logger.error(f"AcceptWaveform 错误: {e}")
-                            print(f"[ERROR] AcceptWaveform 错误: {e}")
-                            import traceback
-                            error_trace = traceback.format_exc()
-                            self.logger.error(error_trace)
-                            print(error_trace)
-                            return False
-
-                    def Result(self):
-                        """
-                        获取当前识别结果（兼容Vosk API）
-
-                        Returns:
-                            str: 当前识别结果的JSON字符串
-                        """
-                        try:
-                            # 检查识别器和流是否已初始化
-                            if not self.model or not self.model.recognizer or not hasattr(self, 'current_stream') or self.current_stream is None:
-                                self.logger.warning("模型或流未初始化，返回空结果")
-                                print("[WARNING] 模型或流未初始化，返回空结果")
-                                return json.dumps({"text": ""})
-
-                            # 解码
-                            try:
-                                decode_count = 0
-                                while self.model.recognizer.is_ready(self.current_stream):
-                                    self.model.recognizer.decode_stream(self.current_stream)
-                                    decode_count += 1
-                                self.logger.debug(f"解码完成，执行了 {decode_count} 次解码")
-                                print(f"[DEBUG] 解码完成，执行了 {decode_count} 次解码")
-                            except Exception as e:
-                                self.logger.error(f"解码错误: {e}")
-                                print(f"[ERROR] 解码错误: {e}")
-                                import traceback
-                                error_trace = traceback.format_exc()
-                                self.logger.error(error_trace)
-                                print(error_trace)
-                                return json.dumps({"text": ""})
-
-                            # 获取结果
-                            try:
-                                result = self.model.recognizer.get_result(self.current_stream)
-                                self.logger.debug(f"原始结果: {result}")
-                                print(f"[DEBUG] 原始结果: {result}")
-                            except Exception as e:
-                                self.logger.error(f"获取结果错误: {e}")
-                                print(f"[ERROR] 获取结果错误: {e}")
-                                import traceback
-                                error_trace = traceback.format_exc()
-                                self.logger.error(error_trace)
-                                print(error_trace)
-                                return json.dumps({"text": ""})
-
-                            # 重置流
-                            try:
-                                old_stream = self.current_stream
-                                self.current_stream = self.model.recognizer.create_stream()
-                                self.logger.debug("流重置成功")
-                                print("[DEBUG] 流重置成功")
-                            except Exception as e:
-                                self.logger.error(f"重置流失败: {e}")
-                                print(f"[ERROR] 重置流失败: {e}")
-                                import traceback
-                                error_trace = traceback.format_exc()
-                                self.logger.error(error_trace)
-                                print(error_trace)
-                                # 继续使用旧的流
-                                self.current_stream = old_stream
-
-                            # 处理结果
-                            if result:
-                                # 使用正则表达式处理结果，确保每个句子以句号结尾
-                                import re
-                                processed_result = re.sub(r'(?<=[a-zA-Z0-9])(?=[A-Z])', '. ', result)
-                                processed_result = re.sub(r'\s+$', '', processed_result)  # 去除末尾空格
-                                if not processed_result.endswith('.'):
-                                    processed_result += '.'  # 确保结果以句号结尾
-
-                                # 首字母大写
-                                if processed_result and len(processed_result) > 0:
-                                    processed_result = processed_result[0].upper() + processed_result[1:]
-
-                                self.logger.debug(f"处理后的结果: {processed_result}")
-                                print(f"[DEBUG] 处理后的结果: {processed_result}")
-
-                                # 保存为最终结果
-                                self.final_result = processed_result
-
-                                # 检查是否是新的结果
-                                if self.final_result != self.previous_result:
-                                    self.previous_result = self.final_result
-                                    self.accumulated_text.append(self.final_result)
-                                    self.logger.info(f"新的完整结果: {self.final_result}")
-                                    print(f"[INFO] 新的完整结果: {self.final_result}")
-
-                                # 返回JSON格式的结果
-                                json_result = json.dumps({"text": processed_result})
-                                self.logger.debug(f"返回JSON结果: {json_result}")
-                                print(f"[DEBUG] 返回JSON结果: {json_result}")
-                                return json_result
-
-                            self.logger.warning("结果为空，返回空JSON")
-                            print("[WARNING] 结果为空，返回空JSON")
-                            return json.dumps({"text": ""})
-
-                        except Exception as e:
-                            self.logger.error(f"Result 错误: {e}")
-                            print(f"[ERROR] Result 错误: {e}")
-                            import traceback
-                            error_trace = traceback.format_exc()
-                            self.logger.error(error_trace)
-                            print(error_trace)
-                            return json.dumps({"text": ""})
-
-                    def PartialResult(self):
-                        """
-                        获取部分识别结果（兼容Vosk API）
-
-                        Returns:
-                            str: 部分识别结果的JSON字符串
-                        """
-                        try:
-                            # 检查识别器和流是否已初始化
-                            if not self.model or not self.model.recognizer or not hasattr(self, 'current_stream') or self.current_stream is None:
-                                self.logger.warning("模型或流未初始化，返回空部分结果")
-                                print("[WARNING] 模型或流未初始化，返回空部分结果")
-                                return json.dumps({"partial": ""})
-
-                            # 解码
-                            try:
-                                decode_count = 0
-                                while self.model.recognizer.is_ready(self.current_stream):
-                                    self.model.recognizer.decode_stream(self.current_stream)
-                                    decode_count += 1
-                                self.logger.debug(f"部分结果解码完成，执行了 {decode_count} 次解码")
-                                print(f"[DEBUG] 部分结果解码完成，执行了 {decode_count} 次解码")
-                            except Exception as e:
-                                self.logger.error(f"部分结果解码错误: {e}")
-                                print(f"[ERROR] 部分结果解码错误: {e}")
-                                import traceback
-                                error_trace = traceback.format_exc()
-                                self.logger.error(error_trace)
-                                print(error_trace)
-                                return json.dumps({"partial": ""})
-
-                            # 获取部分结果
-                            try:
-                                result = self.model.recognizer.get_result(self.current_stream)
-                                self.logger.debug(f"原始部分结果: {result}")
-                                print(f"[DEBUG] 原始部分结果: {result}")
-                            except Exception as e:
-                                self.logger.error(f"获取部分结果错误: {e}")
-                                print(f"[ERROR] 获取部分结果错误: {e}")
-                                import traceback
-                                error_trace = traceback.format_exc()
-                                self.logger.error(error_trace)
-                                print(error_trace)
-                                return json.dumps({"partial": ""})
-
-                            # 处理结果
-                            if result:
-                                # 使用正则表达式处理结果，确保每个句子以句号结尾
-                                import re
-                                processed_result = re.sub(r'(?<=[a-zA-Z0-9])(?=[A-Z])', '. ', result)
-                                processed_result = re.sub(r'\s+$', '', processed_result)  # 去除末尾空格
-
-                                # 首字母大写
-                                if processed_result and len(processed_result) > 0:
-                                    processed_result = processed_result[0].upper() + processed_result[1:]
-
-                                self.logger.debug(f"处理后的部分结果: {processed_result}")
-                                print(f"[DEBUG] 处理后的部分结果: {processed_result}")
-
-                                # 保存为部分结果
-                                self.partial_result = processed_result
-
-                                # 返回JSON格式的结果
-                                json_result = json.dumps({"partial": processed_result})
-                                self.logger.debug(f"返回JSON部分结果: {json_result}")
-                                print(f"[DEBUG] 返回JSON部分结果: {json_result}")
-                                return json_result
-
-                            self.logger.warning("部分结果为空，返回空JSON")
-                            print("[WARNING] 部分结果为空，返回空JSON")
-                            return json.dumps({"partial": ""})
-
-                        except Exception as e:
-                            self.logger.error(f"PartialResult 错误: {e}")
-                            print(f"[ERROR] PartialResult 错误: {e}")
-                            import traceback
-                            error_trace = traceback.format_exc()
-                            self.logger.error(error_trace)
-                            print(error_trace)
-                            return json.dumps({"partial": ""})
-
-                    def FinalResult(self):
-                        """
-                        获取最终识别结果（兼容Vosk API）
-
-                        Returns:
-                            str: 最终识别结果的JSON字符串
-                        """
-                        try:
-                            # 检查识别器和流是否已初始化
-                            if not self.model or not self.model.recognizer:
-                                return json.dumps({"text": ""})
-
-                            # 创建一个新的流
-                            try:
-                                stream = self.model.recognizer.create_stream()
-                            except Exception as e:
-                                self.logger.error(f"创建流失败: {e}")
-                                import traceback
-                                self.logger.error(traceback.format_exc())
-                                return json.dumps({"text": ""})
-
-                            # 标记输入结束
-                            try:
-                                stream.input_finished()
-
-                                # 解码
-                                while self.model.recognizer.is_ready(stream):
-                                    self.model.recognizer.decode_stream(stream)
-                            except Exception as e:
-                                self.logger.error(f"解码剩余音频错误: {e}")
-                                import traceback
-                                self.logger.error(traceback.format_exc())
-                                return json.dumps({"text": ""})
-
-                            # 获取结果
-                            try:
-                                result = self.model.recognizer.get_result(stream)
-
-                                # 处理结果
-                                if result:
-                                    # 使用正则表达式处理结果，确保每个句子以句号结尾
-                                    import re
-                                    result = re.sub(r'(?<=[a-zA-Z0-9])(?=[A-Z])', '. ', result)
-                                    result = re.sub(r'\s+$', '', result)  # 去除末尾空格
-                                    if not result.endswith('.'):
-                                        result += '.'  # 确保结果以句号结尾
-
-                                    # 首字母大写
-                                    if result and len(result) > 0:
-                                        result = result[0].upper() + result[1:]
-
-                                    # 返回JSON格式的结果
-                                    return json.dumps({"text": result})
-
-                                return json.dumps({"text": ""})
-
-                            except Exception as e:
-                                self.logger.error(f"获取结果错误: {e}")
-                                import traceback
-                                self.logger.error(traceback.format_exc())
-                                return json.dumps({"text": ""})
-
-                        except Exception as e:
-                            self.logger.error(f"FinalResult 错误: {e}")
-                            import traceback
-                            self.logger.error(traceback.format_exc())
-                            return json.dumps({"text": ""})
-
-                    def Reset(self):
-                        """
-                        重置识别器状态（兼容Vosk API）
-                        """
-                        try:
-                            # 重置流
-                            if hasattr(self, 'current_stream') and self.current_stream is not None:
-                                try:
-                                    self.current_stream = self.model.recognizer.create_stream()
-                                    self.logger.info("重置流成功")
-                                except Exception as e:
-                                    self.logger.error(f"重置流失败: {e}")
-                                    import traceback
-                                    self.logger.error(traceback.format_exc())
-                                    self.current_stream = None
-
-                            # 重置结果
-                            self.partial_result = ""
-                            self.final_result = ""
-                            self.previous_result = ""
-
-                        except Exception as e:
-                            self.logger.error(f"Reset 错误: {e}")
-                            import traceback
-                            self.logger.error(traceback.format_exc())
-
-                # 返回包装后的识别器
-                model_type_str = "int8量化" if hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8 else "标准"
-                sherpa_logger.info(f"创建 Sherpa-ONNX {model_type_str}识别器")
-
-                try:
-                    recognizer = SherpaRecognizer(self.current_engine)
-                    sherpa_logger.info(f"SherpaRecognizer 实例创建成功: {recognizer}")
-
-                    # 设置引擎类型
-                    recognizer.engine_type = engine_type
-                    sherpa_logger.info(f"设置 Sherpa-ONNX 识别器引擎类型: {engine_type}")
-
-                    sherpa_logger.info(f"Sherpa-ONNX 识别器创建成功，引擎类型: {recognizer.engine_type}")
-                    return recognizer
-                except Exception as e:
-                    error_msg = f"创建 SherpaRecognizer 实例失败: {e}"
-                    sherpa_logger.error(error_msg)
-                    print(error_msg)
-                    import traceback
-                    error_trace = traceback.format_exc()
-                    sherpa_logger.error(error_trace)
-                    print(error_trace)
-                    return None
-            else:
-                sherpa_logger.error(f"不支持的引擎类型: {engine_type}")
-                return None
-
-        except Exception as e:
-            logger.error(f"创建识别器时发生错误: {str(e)}")
-            logger.error(f"当前工作目录: {os.getcwd()}")
-            logger.error(f"模型类型: {self.model_type}")
-            logger.error(f"模型配置: {self.models_config.get(self.model_type, {})}")
-            import traceback
-            error_trace = traceback.format_exc()
-            logger.error(f"错误堆栈:\n{error_trace}")
-
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-                sherpa_logger.error(f"创建识别器时发生错误: {str(e)}")
-                sherpa_logger.error(error_trace)
-            except:
-                pass
-
+        """创建识别器实例"""
+        if not self.current_engine:
+            logger.error("当前引擎未初始化")
             return None
+
+        engine_type = self.get_current_engine_type()
+        if engine_type == "vosk_small":
+            logger.info(f"创建Vosk识别器，引擎类型: {engine_type}")
+            model = vosk.Model(self.current_engine.model_path)
+            recognizer = vosk.KaldiRecognizer(model, 16000)
+            # 设置引擎类型，确保与模型类型一致
+            recognizer.engine_type = engine_type
+            logger.info(f"Vosk识别器创建成功，引擎类型: {engine_type}")
+            return recognizer
+
+        elif engine_type and engine_type.startswith("sherpa"):
+            logger.info(f"创建Sherpa识别器，引擎类型: {engine_type}")
+            # 调用引擎的create_recognizer方法
+            recognizer = self.current_engine.create_recognizer()
+            if recognizer:
+                # 确保设置了正确的引擎类型
+                if not hasattr(recognizer, 'engine_type'):
+                    recognizer.engine_type = engine_type
+                    logger.info(f"为Sherpa识别器设置引擎类型: {engine_type}")
+                logger.info(f"Sherpa识别器创建成功，引擎类型: {engine_type}")
+            return recognizer
+
+        logger.error(f"不支持的引擎类型: {engine_type}")
+        return None
 
     def check_model_directory(self) -> Dict[str, bool]:
         """
@@ -1157,10 +581,16 @@ class ASRModelManager(QObject):
             if self.model_type and self.model_type != engine_type:
                 sherpa_logger.warning(f"模型类型 {self.model_type} 与引擎类型 {engine_type} 不一致")
 
-                # 更新模型类型为引擎类型
-                old_model_type = self.model_type
-                self.model_type = engine_type
-                sherpa_logger.info(f"模型类型已从 {old_model_type} 更新为: {self.model_type}")
+                # 如果用户明确选择了一个模型类型，但传入的engine_type不同，
+                # 则使用用户选择的模型类型，而不是传入的engine_type
+                if self.model_type != engine_type:
+                    sherpa_logger.warning(f"用户选择的模型类型 {self.model_type} 与请求的引擎类型 {engine_type} 不一致")
+                    sherpa_logger.info(f"将使用用户选择的模型类型: {self.model_type}")
+
+                    # 更新engine_type为用户选择的模型类型
+                    old_engine_type = engine_type
+                    engine_type = self.model_type
+                    sherpa_logger.info(f"引擎类型已从 {old_engine_type} 更新为: {engine_type}")
 
             if engine_type not in self.models_config:
                 sherpa_logger.error(f"引擎 {engine_type} 在配置中不存在")
@@ -1277,13 +707,24 @@ class ASRModelManager(QObject):
             current_engine_type = self.get_current_engine_type()
             sherpa_logger.info(f"初始化后的引擎类型: {current_engine_type}")
 
-            # 确保模型类型和引擎类型一致
+            # 检查初始化后的引擎类型与请求的引擎类型是否一致
             if current_engine_type != engine_type:
                 sherpa_logger.warning(f"初始化后的引擎类型 {current_engine_type} 与请求的引擎类型 {engine_type} 不一致")
-                # 更新模型类型为实际的引擎类型
-                old_model_type = self.model_type
-                self.model_type = current_engine_type
-                sherpa_logger.info(f"模型类型已从 {old_model_type} 更新为: {self.model_type}")
+
+                # 如果用户明确选择了一个模型类型，则保持该类型不变
+                if self.model_type and self.model_type == engine_type:
+                    sherpa_logger.info(f"保持用户选择的模型类型: {self.model_type}")
+
+                    # 为引擎设置正确的engine_type属性
+                    if hasattr(self.current_engine, 'engine_type'):
+                        old_engine_type = self.current_engine.engine_type
+                        self.current_engine.engine_type = self.model_type
+                        sherpa_logger.info(f"引擎的engine_type属性已从 {old_engine_type} 更新为: {self.model_type}")
+                else:
+                    # 如果没有用户选择的模型类型，则更新模型类型为实际的引擎类型
+                    old_model_type = self.model_type
+                    self.model_type = current_engine_type
+                    sherpa_logger.info(f"模型类型已从 {old_model_type} 更新为: {self.model_type}")
 
             # 发射模型加载完成信号
             sherpa_logger.info("发射模型加载完成信号")
@@ -1356,9 +797,9 @@ class ASRModelManager(QObject):
                 success = self.initialize_engine(self.model_type)
                 sherpa_logger.info(f"引擎初始化结果: {success}")
             else:
-                # 默认使用 vosk
-                sherpa_logger.info("尝试初始化默认引擎: vosk")
-                success = self.initialize_engine('vosk')
+                # 默认使用 vosk_small
+                sherpa_logger.info("尝试初始化默认引擎: vosk_small")
+                success = self.initialize_engine('vosk_small')
                 sherpa_logger.info(f"默认引擎初始化结果: {success}")
 
         # 再次检查引擎是否已初始化
@@ -1374,47 +815,35 @@ class ASRModelManager(QObject):
         if self.model_type and engine_type and self.model_type != engine_type:
             sherpa_logger.warning(f"模型类型 {self.model_type} 与引擎类型 {engine_type} 不一致")
 
-            # 尝试重新初始化引擎
+            # 尝试重新初始化引擎，使用用户选择的模型类型
             sherpa_logger.info(f"尝试重新初始化引擎: {self.model_type}")
             if not self.initialize_engine(self.model_type):
                 sherpa_logger.error(f"重新初始化引擎失败")
 
-                # 如果重新初始化失败，尝试使用当前引擎
-                sherpa_logger.warning(f"使用当前引擎 {engine_type} 继续转录")
+                # 如果重新初始化失败，不要继续使用当前引擎，而是直接报错
+                sherpa_logger.error(f"无法使用用户选择的模型类型 {self.model_type} 进行转录")
+                sherpa_logger.error(f"请确保选择的模型类型正确并且模型文件存在")
+                return None
             else:
                 # 更新引擎类型
                 engine_type = self.get_current_engine_type()
                 sherpa_logger.info(f"引擎重新初始化成功，当前引擎类型: {engine_type}")
                 sherpa_logger.info(f"当前引擎: {type(self.current_engine).__name__ if self.current_engine else None}")
 
+                # 再次检查引擎类型是否与用户选择的模型类型一致
+                if engine_type != self.model_type:
+                    sherpa_logger.error(f"引擎类型 {engine_type} 与用户选择的模型类型 {self.model_type} 仍然不一致")
+                    sherpa_logger.error(f"无法使用用户选择的模型类型进行转录")
+                    return None
+
         # 检查当前引擎是否支持文件转录
         if not hasattr(self.current_engine, 'transcribe_file'):
-            sherpa_logger.error(f"当前引擎 {engine_type} 不支持文件转录")
+            error_msg = f"当前引擎 {engine_type} 不支持文件转录"
+            sherpa_logger.error(error_msg)
 
-            # 尝试切换到支持文件转录的引擎
-            sherpa_logger.info("尝试切换到支持文件转录的引擎")
-
-            # 优先尝试 sherpa_0626 引擎
-            if self.initialize_engine('sherpa_0626'):
-                sherpa_logger.info("成功切换到 sherpa_0626 引擎")
-            # 然后尝试 sherpa_std 引擎
-            elif self.initialize_engine('sherpa_std'):
-                sherpa_logger.info("成功切换到 sherpa_std 引擎")
-            # 最后尝试 vosk 引擎
-            elif self.initialize_engine('vosk'):
-                sherpa_logger.info("成功切换到 vosk 引擎")
-            else:
-                sherpa_logger.error("无法切换到支持文件转录的引擎")
-                return None
-
-            # 再次检查引擎是否支持文件转录
-            if not hasattr(self.current_engine, 'transcribe_file'):
-                sherpa_logger.error("切换后的引擎仍不支持文件转录")
-                return None
-
-            # 更新引擎类型
-            engine_type = self.get_current_engine_type()
-            sherpa_logger.info(f"切换后的引擎类型: {engine_type}")
+            # 不再自动切换引擎，而是直接报错
+            sherpa_logger.error("当前模型不支持文件转录，请选择支持文件转录的模型")
+            return None
 
         try:
             # 记录详细的引擎信息
@@ -1564,7 +993,7 @@ class ASRModelManager(QObject):
                     if model_config.get("type") == "int8":
                         engine_type = "sherpa_0626_int8"
                     else:
-                        engine_type = "sherpa_0626"  # 使用简化名称，与config.json一致
+                        engine_type = "sherpa_0626_std"  # 使用标准化名称，与config.json一致
 
                     sherpa_logger.debug(f"当前引擎是 SherpaOnnxASR ({engine_type})")
                 else:
@@ -1586,7 +1015,7 @@ class ASRModelManager(QObject):
                     if hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8:
                         engine_type = "sherpa_0626_int8"
                     else:
-                        engine_type = "sherpa_0626"
+                        engine_type = "sherpa_0626_std"
                 else:
                     # 非0626模型
                     if hasattr(self.current_engine, 'is_int8') and self.current_engine.is_int8:
@@ -1603,8 +1032,11 @@ class ASRModelManager(QObject):
         if self.model_type and engine_type and self.model_type != engine_type:
             sherpa_logger.warning(f"模型类型 {self.model_type} 与推断的引擎类型 {engine_type} 不一致")
             sherpa_logger.warning(f"保持当前模型类型: {self.model_type}，但可能导致功能异常")
-            # 返回推断的引擎类型，而不是model_type
-            return engine_type
+
+            # 返回用户选择的模型类型，而不是推断的引擎类型
+            # 这样可以确保在UI和日志中显示用户选择的模型类型
+            sherpa_logger.info(f"返回用户选择的模型类型: {self.model_type}")
+            return self.model_type
         elif not self.model_type and engine_type:
             # 如果model_type为空但能推断出引擎类型，则更新model_type
             self.model_type = engine_type

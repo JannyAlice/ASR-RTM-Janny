@@ -119,10 +119,14 @@ class SubtitleWidget(QScrollArea):
 
         # 初始化引擎类型（用于区分不同的ASR引擎）
         # 这个属性由MainWindow类在set_asr_model和_load_default_model方法中设置
-        # 可能的值：'vosk', 'sherpa_int8', 'sherpa_std'
+        # 可能的值：'vosk_small', 'sherpa_onnx_int8', 'sherpa_onnx_std', 'sherpa_0626_int8', 'sherpa_0626_std'
         # 用于在update_text方法中根据引擎类型采用不同的处理逻辑
         # 这样可以确保不同引擎的结果都能正确显示，而不会互相影响
         self.current_engine_type = None
+
+        # 初始化audio_worker属性，用于保存AudioWorker实例
+        # 这样可以在停止转录时获取最后一个单词
+        self.audio_worker = None
 
         # 设置滚动区域属性
         self.setWidgetResizable(True)
@@ -262,10 +266,28 @@ class SubtitleWidget(QScrollArea):
                 if not hasattr(self, 'current_partial_paragraph'):
                     self.current_partial_paragraph = ""
 
+                # 导入 Sherpa-ONNX 日志工具
+                try:
+                    from src.utils.sherpa_logger import sherpa_logger
+                except ImportError:
+                    # 如果导入失败，创建一个简单的日志记录器
+                    class DummyLogger:
+                        def debug(self, msg): print(f"DEBUG: {msg}")
+                        def info(self, msg): print(f"INFO: {msg}")
+                        def warning(self, msg): print(f"WARNING: {msg}")
+                        def error(self, msg): print(f"ERROR: {msg}")
+                    sherpa_logger = DummyLogger()
+
+                # 检查是否与最后一个完整结果相似
+                if self.transcript_text and self._is_similar(partial_text, self.transcript_text[-1]):
+                    sherpa_logger.debug(f"部分结果与最后一个完整结果相似，不更新: {partial_text}")
+                    return
+
                 # 如果部分文本不是当前部分段落的一部分，更新当前部分段落
-                if partial_text not in self.current_partial_paragraph:
+                if not self.current_partial_paragraph or partial_text not in self.current_partial_paragraph:
                     # 如果当前部分段落为空，直接设置
                     if not self.current_partial_paragraph:
+                        sherpa_logger.debug(f"设置首次部分结果: {partial_text}")
                         self.current_partial_paragraph = partial_text
                     else:
                         # 检查部分文本是否是当前部分段落的一部分
@@ -273,19 +295,51 @@ class SubtitleWidget(QScrollArea):
                         # 如果不是，使用新的部分文本
                         if self.current_partial_paragraph in partial_text:
                             # 新的部分文本包含当前部分段落，使用新的部分文本
+                            sherpa_logger.debug(f"部分结果更新 (包含旧结果): 旧={self.current_partial_paragraph}, 新={partial_text}")
                             self.current_partial_paragraph = partial_text
+                        elif partial_text in self.current_partial_paragraph:
+                            # 当前部分段落包含新的部分文本，保留当前部分段落
+                            sherpa_logger.debug(f"保留当前部分结果 (包含新结果): 当前={self.current_partial_paragraph}, 新={partial_text}")
+                            # 不更新，保留当前部分段落
+                            pass
                         else:
-                            # 新的部分文本与当前部分段落无关，使用新的部分文本
-                            self.current_partial_paragraph = partial_text
+                            # 检查相似度
+                            if self._is_similar(partial_text, self.current_partial_paragraph):
+                                # 如果相似度高，使用较长的文本
+                                if len(partial_text) > len(self.current_partial_paragraph):
+                                    sherpa_logger.debug(f"部分结果更新 (相似且更长): 旧={self.current_partial_paragraph}, 新={partial_text}")
+                                    self.current_partial_paragraph = partial_text
+                                else:
+                                    sherpa_logger.debug(f"保留当前部分结果 (相似但更短): 当前={self.current_partial_paragraph}, 新={partial_text}")
+                                    # 不更新，保留当前部分段落
+                                    pass
+                            else:
+                                # 新的部分文本与当前部分段落无关，使用新的部分文本
+                                sherpa_logger.debug(f"部分结果更新 (全新结果): 旧={self.current_partial_paragraph}, 新={partial_text}")
+                                self.current_partial_paragraph = partial_text
+
+                # 保存最新的部分结果，用于后续处理
+                # 这对于在停止转录时获取最后一个单词特别有用
+                try:
+                    # 尝试将最新的部分结果保存到AudioWorker实例中
+                    if hasattr(self, 'audio_worker') and self.audio_worker:
+                        if hasattr(self.audio_worker, '_last_partial_result'):
+                            self.audio_worker._last_partial_result = self.current_partial_paragraph
+                            sherpa_logger.debug(f"保存最新部分结果到AudioWorker: {self.current_partial_paragraph}")
+                except Exception as e:
+                    sherpa_logger.error(f"保存最新部分结果错误: {e}")
+                    import traceback
+                    sherpa_logger.error(traceback.format_exc())
 
                 # 显示最近的完整结果加上当前的部分段落
                 # 但不将部分结果添加到transcript_text列表中
-                display_text = self.transcript_text[-5:] if self.transcript_text else []
+                display_text = self.transcript_text[-9:] if self.transcript_text else []  # 显示更多的历史记录
 
                 # 只有当部分结果不为空时才添加到显示列表中
                 if self.current_partial_paragraph:
                     # 将部分结果添加到显示列表中，但不添加到transcript_text列表中
                     display_text.append(self.current_partial_paragraph)
+                    print(f"显示部分结果: {self.current_partial_paragraph}")
 
                 # 更新字幕标签
                 print(f"[DEBUG] 更新部分结果: {self.current_partial_paragraph}")
@@ -336,6 +390,32 @@ class SubtitleWidget(QScrollArea):
                     # 如果是重复或非常相似的文本，不添加到列表
                     print(f"跳过重复文本: {text}")
                     sherpa_logger.info(f"跳过重复文本: {text}")
+
+                    # 检查是否是最终结果（通常比部分结果更完整）
+                    # 如果当前文本比最后一个文本长，可能是更完整的最终结果
+                    if len(text) > len(self.transcript_text[-1]):
+                        sherpa_logger.info(f"检测到可能的最终结果，替换最后一个文本")
+                        sherpa_logger.info(f"原文本: {self.transcript_text[-1]}")
+                        sherpa_logger.info(f"新文本: {text}")
+
+                        # 替换最后一个文本
+                        self.transcript_text[-1] = text
+
+                        # 更新完整转录历史记录
+                        if self.full_transcript_history:
+                            self.full_transcript_history[-1] = text
+                        else:
+                            self.full_transcript_history.append(text)
+
+                        # 更新带时间戳的转录历史记录
+                        import time
+                        timestamp = time.strftime("%H:%M:%S")
+                        if self.timestamped_transcript_history:
+                            self.timestamped_transcript_history[-1] = (text, timestamp)
+                        else:
+                            self.timestamped_transcript_history.append((text, timestamp))
+
+                        sherpa_logger.info(f"[{timestamp}] 更新最终结果: {text}")
                 else:
                     # 添加新的完整结果到转录文本列表
                     print(f"添加新文本: {text}")
@@ -392,10 +472,17 @@ class SubtitleWidget(QScrollArea):
 
     def _scroll_to_bottom(self):
         """滚动到底部。"""
-        scroll_bar = self.verticalScrollBar()
-        scroll_bar.setValue(scroll_bar.maximum())
-        # 确保滚动到底部后保持位置
-        QTimer.singleShot(50, lambda: scroll_bar.setValue(scroll_bar.maximum()))
+        try:
+            # 直接使用自身的垂直滚动条
+            scroll_bar = self.verticalScrollBar()
+            if scroll_bar:
+                scroll_bar.setValue(scroll_bar.maximum())
+                # 确保滚动到底部后保持位置
+                QTimer.singleShot(50, lambda: scroll_bar.setValue(scroll_bar.maximum()))
+        except Exception as e:
+            print(f"滚动到底部错误: {e}")
+            import traceback
+            print(traceback.format_exc())
 
     def set_font_size(self, size_key):
         """设置字体大小。
@@ -477,8 +564,125 @@ class SubtitleWidget(QScrollArea):
 
         return "\n".join(formatted_text)
 
+    def get_all_transcript_data(self):
+        """
+        获取所有转录数据，包括带时间戳的转录历史、完整转录历史、部分结果历史和当前显示内容
+
+        Returns:
+            dict: 包含所有转录数据的字典
+        """
+        # 获取当前显示内容
+        current_display = self.subtitle_label.text()
+
+        # 返回所有数据
+        return {
+            'timestamped_transcript': self.timestamped_transcript_history,
+            'full_transcript': self.full_transcript_history,
+            'partial_results': self.partial_results_history,
+            'current_display': current_display
+        }
+
+    def _find_matching_complete_text(self, text):
+        """查找与给定文本匹配的完整句子
+
+        Args:
+            text (str): 要匹配的文本（通常是部分结果）
+
+        Returns:
+            str: 匹配的完整句子，如果没有找到则返回None
+        """
+        try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
+            if not text:
+                return None
+
+            # 打印完整的transcript_text列表，便于调试
+            sherpa_logger.info(f"查找匹配的完整句子，当前完整文本列表: {self.transcript_text}")
+
+            # 首先检查是否有以"and"结尾的部分结果
+            if " and " in text or text.endswith(" and"):
+                sherpa_logger.info(f"检测到以'and'结尾的部分结果: {text}")
+                # 特殊处理以"and"结尾的情况
+                for complete_text in reversed(self.transcript_text):
+                    # 检查是否有包含相同前缀但更完整的句子
+                    if complete_text.startswith(text.rstrip(" and")) and "and " in complete_text:
+                        sherpa_logger.info(f"找到匹配的完整结果(and特殊处理): {complete_text}")
+                        return complete_text
+
+            # 如果没有找到匹配，继续使用常规匹配逻辑
+            if text.endswith(" and"):
+                # 查找最近的完整结果中是否包含当前部分结果
+                for complete_text in reversed(self.transcript_text):
+                    # 检查部分结果是否是完整结果的前缀（去掉末尾的"and"）
+                    prefix = text.rstrip(" and")
+                    if prefix and complete_text.startswith(prefix):
+                        sherpa_logger.info(f"找到匹配的完整结果(前缀匹配-去除and): {complete_text}")
+                        return complete_text
+
+            # 如果仍然没有找到匹配，使用常规匹配逻辑
+            if text.endswith(" and"):
+                for complete_text in reversed(self.transcript_text):
+                    # 检查部分结果（去掉末尾的"and"）是否包含在完整结果中
+                    prefix = text.rstrip(" and")
+                    if prefix and prefix in complete_text:
+                        sherpa_logger.info(f"找到匹配的完整结果(子串匹配-去除and): {complete_text}")
+                        return complete_text
+
+            # 如果仍然没有找到匹配，使用常规匹配逻辑
+            for complete_text in reversed(self.transcript_text):
+                # 检查部分结果是否是完整结果的前缀
+                if complete_text.startswith(text):
+                    sherpa_logger.info(f"找到匹配的完整结果(前缀匹配): {complete_text}")
+                    return complete_text
+                # 检查部分结果是否包含在完整结果中
+                elif text in complete_text:
+                    sherpa_logger.info(f"找到匹配的完整结果(子串匹配): {complete_text}")
+                    return complete_text
+                # 检查完整结果是否包含部分结果的大部分内容
+                elif len(text) > 10:  # 只对较长的部分结果进行相似度检查
+                    # 计算部分结果的单词
+                    partial_words = text.split()
+                    # 计算完整结果的单词
+                    complete_words = complete_text.split()
+                    # 计算共同单词的数量
+                    common_words = set(partial_words) & set(complete_words)
+                    # 如果共同单词的数量超过部分结果单词数量的80%，认为匹配
+                    if len(common_words) >= 0.8 * len(partial_words):
+                        sherpa_logger.info(f"找到匹配的完整结果(相似度匹配): {complete_text}")
+                        return complete_text
+
+                    # 如果部分结果以"and"结尾，特殊处理
+                    if text.endswith(" and"):
+                        # 计算去掉"and"后的相似度
+                        partial_words_no_and = text.rstrip(" and").split()
+                        if partial_words_no_and:
+                            common_words_no_and = set(partial_words_no_and) & set(complete_words)
+                            if len(common_words_no_and) >= 0.8 * len(partial_words_no_and):
+                                sherpa_logger.info(f"找到匹配的完整结果(相似度匹配-去除and): {complete_text}")
+                                return complete_text
+
+            # 如果没有找到匹配的完整句子，返回None
+            sherpa_logger.info(f"未找到匹配的完整句子: {text}")
+            return None
+        except Exception as e:
+            print(f"查找匹配的完整句子错误: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return None
+
     def _is_similar(self, text1, text2):
-        """检查两段文本是否相似（相似度阈值60%）
+        """检查两段文本是否相似（相似度阈值80%）
 
         Args:
             text1 (str): 第一段文本
@@ -487,15 +691,53 @@ class SubtitleWidget(QScrollArea):
         Returns:
             bool: 如果相似度超过阈值返回True
         """
-        if not text1 or not text2:
-            return False
+        try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
 
-        # 长度差异检查
-        if abs(len(text1) - len(text2)) > 10:
-            return False
+            if not text1 or not text2:
+                return False
 
-        # 使用difflib计算相似度
-        seq = difflib.SequenceMatcher(None, text1.lower(), text2.lower())
-        ratio = seq.ratio()
-        print(f"文本相似度检测: '{text1}' vs '{text2}' = {ratio:.2f}")
-        return ratio > 0.8  # 相似度超过80%视为重复
+            # 长度差异检查
+            if abs(len(text1) - len(text2)) > 10:
+                sherpa_logger.debug(f"文本长度差异过大: {len(text1)} vs {len(text2)}")
+                return False
+
+            # 检查一个文本是否是另一个的子串
+            # 这对于处理最终结果特别有用，因为最终结果通常包含部分结果
+            if text1 in text2:
+                sherpa_logger.debug(f"文本1是文本2的子串: '{text1}' in '{text2}'")
+                return True
+            if text2 in text1:
+                sherpa_logger.debug(f"文本2是文本1的子串: '{text2}' in '{text1}'")
+                return True
+
+            # 使用difflib计算相似度
+            seq = difflib.SequenceMatcher(None, text1.lower(), text2.lower())
+            ratio = seq.ratio()
+            sherpa_logger.debug(f"文本相似度检测: '{text1}' vs '{text2}' = {ratio:.2f}")
+
+            # 相似度超过80%视为重复
+            # 但如果文本长度差异很小且相似度超过70%，也视为重复
+            if ratio > 0.8:
+                return True
+            elif abs(len(text1) - len(text2)) <= 5 and ratio > 0.7:
+                sherpa_logger.debug(f"文本长度差异小且相似度较高: {abs(len(text1) - len(text2))} 差异, {ratio:.2f} 相似度")
+                return True
+
+            return False
+        except Exception as e:
+            print(f"相似度检测错误: {e}")
+            import traceback
+            print(traceback.format_exc())
+            # 出错时返回False，避免误判
+            return False

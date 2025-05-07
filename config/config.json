@@ -28,7 +28,7 @@
         }
     },
     "transcription": {
-        "default_model": "sherpa_0626_std"
+        "default_model": "vosk_small"
     },
     "asr": {
         "models": {
@@ -156,8 +156,8 @@
         }
     },
     "window": {
-        "pos_x": 406,
-        "pos_y": 88,
+        "pos_x": 272,
+        "pos_y": 91,
         "width": 962,
         "height": 433,
         "opacity": 0.8980392156862745

@@ -168,7 +168,7 @@ class ConfigManager:
 
     def get_default_model(self) -> str:
         """获取默认模型名称"""
-        return self._config.get('transcription', {}).get('default_model', 'sherpa_0626')
+        return self._config.get('transcription', {}).get('default_model', 'vosk_small')
 
     def validate_model_files(self, model_path: str) -> bool:
         """验证模型文件完整性"""

@@ -82,11 +82,34 @@ class VoskASR:
         """
         try:
             if self.recognizer:
-                result = json.loads(self.recognizer.FinalResult())
-                return result.get("text", "")
+                # 获取最终结果
+                final_result = self.recognizer.FinalResult()
+                print(f"Vosk原始最终结果: {final_result}")
+
+                # 解析JSON
+                result = json.loads(final_result)
+                text = result.get("text", "").strip()
+                print(f"Vosk解析后的最终结果: {text}")
+
+                # 格式化文本
+                if text:
+                    # 首字母大写
+                    if len(text) > 0:
+                        text = text[0].upper() + text[1:]
+
+                    # 如果文本末尾没有标点符号，添加句号
+                    if text[-1] not in ['.', '?', '!', ',', ';', ':', '-']:
+                        text += '.'
+
+                    print(f"Vosk格式化后的最终结果: {text}")
+                    return text
+
+                return None
             return None
         except Exception as e:
             print(f"Error getting VOSK final result: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
             return None
 
     def transcribe_file(self, file_path: str) -> Optional[str]:
@@ -138,12 +161,27 @@ class VoskASR:
                             results.append(result.get("text", ""))
 
                 # 获取最终结果
-                final_result = json.loads(recognizer.FinalResult())
-                if final_result.get("text", "").strip():
-                    results.append(final_result.get("text", ""))
+                final_result_str = recognizer.FinalResult()
+                print(f"文件转录最终结果原始字符串: {final_result_str}")
+
+                final_result = json.loads(final_result_str)
+                final_text = final_result.get("text", "").strip()
+                print(f"文件转录最终结果解析后: {final_text}")
+
+                if final_text:
+                    # 格式化最终文本
+                    if len(final_text) > 0:
+                        final_text = final_text[0].upper() + final_text[1:]
+                    if final_text[-1] not in ['.', '?', '!', ',', ';', ':', '-']:
+                        final_text += '.'
+
+                    print(f"文件转录最终结果格式化后: {final_text}")
+                    results.append(final_text)
 
                 # 合并结果
-                return " ".join(results)
+                combined_result = " ".join(results)
+                print(f"文件转录合并结果: {combined_result}")
+                return combined_result
 
         except Exception as e:
             print(f"Error in VOSK file transcription: {str(e)}")
