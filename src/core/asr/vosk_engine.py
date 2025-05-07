@@ -20,6 +20,9 @@ class VoskASR:
         self.recognizer = None
         self.sample_rate = 16000
 
+        # 设置引擎类型为vosk_small
+        self.engine_type = "vosk_small"
+
         # 自动调用setup方法初始化引擎
         self.setup()
 
@@ -73,6 +76,30 @@ class VoskASR:
         """重置识别器状态"""
         if self.recognizer:
             self.recognizer.Reset()
+
+    def create_recognizer(self) -> Optional[KaldiRecognizer]:
+        """创建新的识别器实例
+
+        Returns:
+            KaldiRecognizer: 新的识别器实例，如果失败则返回 None
+        """
+        try:
+            if not self.model:
+                print("模型未初始化")
+                return None
+
+            recognizer = KaldiRecognizer(self.model, self.sample_rate)
+            recognizer.SetWords(True)
+
+            # 设置引擎类型
+            recognizer.engine_type = "vosk_small"
+
+            return recognizer
+        except Exception as e:
+            print(f"创建识别器失败: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return None
 
     def get_final_result(self) -> Optional[str]:
         """获取最终识别结果
@@ -146,15 +173,30 @@ class VoskASR:
                 recognizer = KaldiRecognizer(self.model, self.sample_rate)
                 recognizer.SetWords(True)
 
+                # 设置引擎类型
+                recognizer.engine_type = "vosk_small"
+
                 # 读取音频数据并进行识别
                 results = []
                 chunk_size = 4000  # 每次读取的帧数
 
+                # 读取整个文件的所有帧
+                all_frames = []
                 while True:
                     frames = wf.readframes(chunk_size)
                     if not frames:
                         break
+                    all_frames.append(frames)
 
+                # 重置文件指针
+                wf.rewind()
+
+                # 先处理前几个块，确保开头部分被正确识别
+                for i in range(min(5, len(all_frames))):
+                    recognizer.AcceptWaveform(all_frames[i])
+
+                # 处理所有音频块
+                for frames in all_frames:
                     if recognizer.AcceptWaveform(frames):
                         result = json.loads(recognizer.Result())
                         if result.get("text", "").strip():
@@ -169,19 +211,24 @@ class VoskASR:
                 print(f"文件转录最终结果解析后: {final_text}")
 
                 if final_text:
-                    # 格式化最终文本
-                    if len(final_text) > 0:
-                        final_text = final_text[0].upper() + final_text[1:]
-                    if final_text[-1] not in ['.', '?', '!', ',', ';', ':', '-']:
-                        final_text += '.'
-
-                    print(f"文件转录最终结果格式化后: {final_text}")
+                    # 将最终结果添加到结果列表
                     results.append(final_text)
 
-                # 合并结果
-                combined_result = " ".join(results)
-                print(f"文件转录合并结果: {combined_result}")
-                return combined_result
+                # 合并所有结果
+                if results:
+                    combined_result = " ".join(results)
+
+                    # 格式化合并后的文本
+                    if len(combined_result) > 0:
+                        combined_result = combined_result[0].upper() + combined_result[1:]
+                    if combined_result[-1] not in ['.', '?', '!', ',', ';', ':', '-']:
+                        combined_result += '.'
+
+                    print(f"文件转录合并结果: {combined_result}")
+                    return combined_result
+                else:
+                    print("没有获取到任何转录结果")
+                    return None
 
         except Exception as e:
             print(f"Error in VOSK file transcription: {str(e)}")

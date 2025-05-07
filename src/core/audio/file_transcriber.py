@@ -8,8 +8,7 @@ import time
 import threading
 import subprocess
 import tempfile
-import numpy as np
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from src.core.signals import TranscriptionSignals
 
@@ -484,6 +483,9 @@ class FileTranscriber:
         self.signals.status_updated.emit(f"第三阶段：处理 {len(all_chunks)} 个音频块... (引擎: {engine_type})")
         total_chunks = len(all_chunks)
 
+        # 收集所有部分结果
+        all_results = []
+
         for i, chunk in enumerate(all_chunks):
             if not self.is_transcribing:
                 sherpa_logger.warning(f"转录已停止 (引擎: {engine_type})")
@@ -493,14 +495,20 @@ class FileTranscriber:
             if recognizer.AcceptWaveform(chunk):
                 result = json.loads(recognizer.Result())
                 if result.get('text', '').strip():
-                    text = self._format_text(result['text'])
+                    text = result['text'].strip()
                     sherpa_logger.info(f"部分结果: {text[:100]}..." if len(text) > 100 else f"部分结果: {text}")
+                    all_results.append(text)
 
-                    # 添加模型和引擎信息到字幕
-                    header = f"[使用 Vosk 模型 (引擎: {engine_type}) 转录结果]"
-                    full_text = f"{header}\n\n{text}"
+                    # 收集部分结果，但不立即显示，避免频繁更新界面
+                    if len(all_results) % 5 == 0:  # 每5个结果更新一次
+                        combined_text = " ".join(all_results)
+                        formatted_text = self._format_text(combined_text)
 
-                    self.signals.new_text.emit(full_text)
+                        # 添加模型和引擎信息到字幕
+                        header = f"[使用 Vosk 模型 (引擎: {engine_type}) 转录中...]"
+                        full_text = f"{header}\n\n{formatted_text}"
+
+                        self.signals.new_text.emit(full_text)
 
             # 更新处理进度（50-99%）
             current_time = time.time()
@@ -513,13 +521,24 @@ class FileTranscriber:
         # 处理最终结果
         sherpa_logger.info(f"处理最终结果... (引擎: {engine_type})")
         final_result = json.loads(recognizer.FinalResult())
-        if final_result.get('text', '').strip():
-            text = self._format_text(final_result['text'])
-            sherpa_logger.info(f"最终结果: {text[:100]}..." if len(text) > 100 else f"最终结果: {text}")
+        final_text = final_result.get('text', '').strip()
+
+        if final_text:
+            # 将最终结果添加到所有结果中
+            all_results.append(final_text)
+            sherpa_logger.info(f"最终结果: {final_text[:100]}..." if len(final_text) > 100 else f"最终结果: {final_text}")
+
+        # 合并所有结果
+        if all_results:
+            # 合并所有部分结果和最终结果
+            combined_text = " ".join(all_results)
+            formatted_text = self._format_text(combined_text)
+
+            sherpa_logger.info(f"合并结果: {formatted_text[:100]}..." if len(formatted_text) > 100 else f"合并结果: {formatted_text}")
 
             # 添加模型和引擎信息到字幕
             header = f"[使用 Vosk 模型 (引擎: {engine_type}) 转录结果]"
-            full_text = f"{header}\n\n{text}"
+            full_text = f"{header}\n\n{formatted_text}"
 
             self.signals.new_text.emit(full_text)
 
@@ -528,7 +547,7 @@ class FileTranscriber:
             self.signals.status_updated.emit(f"文件转录完成 (引擎: {engine_type})")
             sherpa_logger.info(f"文件转录完成 (引擎: {engine_type})")
         else:
-            sherpa_logger.warning(f"没有最终结果 (引擎: {engine_type})")
+            sherpa_logger.warning(f"没有任何转录结果 (引擎: {engine_type})")
             # 发送一个提示信息到字幕窗口
             error_text = f"[使用 Vosk 模型 (引擎: {engine_type}) 转录失败]\n\n没有获取到转录结果。"
             self.signals.new_text.emit(error_text)

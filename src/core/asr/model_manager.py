@@ -76,13 +76,13 @@ class ASRModelManager(QObject):
         self.models_config = {}
         if 'asr' in self.config.config and 'models' in self.config.config['asr']:
             self.models_config = self.config.config['asr']['models']
-        print(f"[DEBUG] ASRModelManager.__init__: models_config = {self.models_config}")
-        print(f"[DEBUG] ASRModelManager.__init__: config = {self.config.config}")
+        # 不再打印完整的配置信息，避免控制台输出过多
+        logger.debug("ASRModelManager初始化完成")
         self.current_model = None
         self.model_path = None
 
-        # 从配置文件获取默认模型类型
-        self.model_type = self.config.config.get('transcription', {}).get('default_model', 'vosk_small')
+        # 从配置文件获取默认模型类型，强制使用vosk_small
+        self.model_type = "vosk_small"
         logger.info(f"使用默认模型类型: {self.model_type}")
 
         # 用于音频转录的引擎
@@ -186,9 +186,8 @@ class ASRModelManager(QObject):
         try:
             logger.info(f"开始加载模型: {model_name}")
 
-            # 调试信息
-            print(f"[DEBUG] 尝试加载模型: {model_name}")
-            print(f"[DEBUG] 当前配置中的模型列表: {list(self.models_config.keys())}")
+            # 调试信息使用logger而不是print，减少控制台输出
+            logger.debug(f"尝试加载模型: {model_name}")
 
             # 检查模型是否存在
             if model_name not in self.models_config:
@@ -197,7 +196,7 @@ class ASRModelManager(QObject):
 
             # 获取模型配置
             model_config = self.models_config[model_name]
-            print(f"[DEBUG] 找到模型配置: {model_name}")
+            logger.debug(f"找到模型配置: {model_name}")
 
             # 获取模型路径
             model_path = model_config.get('path', '')
@@ -205,7 +204,7 @@ class ASRModelManager(QObject):
                 logger.error(f"错误: 模型 {model_name} 路径为空")
                 return False
 
-            print(f"[DEBUG] 模型路径: {model_path}")
+            logger.debug(f"模型路径: {model_path}")
 
             # 验证模型路径和文件
             if not os.path.exists(model_path):
@@ -222,7 +221,13 @@ class ASRModelManager(QObject):
 
             # 更新当前模型信息
             self.current_model_type = model_name
-            self.model_type = model_name  # 确保model_type与current_model_type一致
+
+            # 对于vosk_small模型，强制设置model_type为vosk_small
+            if model_name == "vosk_small":
+                self.model_type = "vosk_small"
+                logger.info("强制设置model_type为vosk_small")
+            else:
+                self.model_type = model_name  # 确保model_type与current_model_type一致
 
             # 初始化引擎
             if not self.initialize_engine(model_name):
@@ -309,7 +314,7 @@ class ASRModelManager(QObject):
                 if not os.path.isabs(joiner_file):
                     joiner_file = os.path.join(model_path, joiner_file)
 
-                print(f"使用配置文件中指定的模型文件名: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
+                logger.debug(f"使用配置文件中指定的模型文件名: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
             else:
                 # 否则使用默认值
                 if is_0626:
@@ -317,13 +322,13 @@ class ASRModelManager(QObject):
                     encoder_file = "encoder-epoch-99-avg-1-chunk-16-left-128.onnx"
                     decoder_file = "decoder-epoch-99-avg-1-chunk-16-left-128.onnx"
                     joiner_file = "joiner-epoch-99-avg-1-chunk-16-left-128.onnx"
-                    print(f"使用0626模型的默认文件名: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
+                    logger.debug(f"使用0626模型的默认文件名")
                 else:
                     # 使用现有模型的文件名
                     encoder_file = "encoder-epoch-99-avg-1.int8.onnx" if is_int8 else "encoder-epoch-99-avg-1.onnx"
                     decoder_file = "decoder-epoch-99-avg-1.int8.onnx" if is_int8 else "decoder-epoch-99-avg-1.onnx"
                     joiner_file = "joiner-epoch-99-avg-1.int8.onnx" if is_int8 else "joiner-epoch-99-avg-1.onnx"
-                    print(f"使用现有模型的默认文件名: encoder={encoder_file}, decoder={decoder_file}, joiner={joiner_file}")
+                    logger.debug(f"使用现有模型的默认文件名")
 
             # 检查模型文件是否存在
             # 获取 tokens 文件路径
@@ -340,7 +345,7 @@ class ASRModelManager(QObject):
 
             for file_path in required_files:
                 if not os.path.exists(file_path):
-                    print(f"模型文件不存在: {file_path}")
+                    logger.error(f"模型文件不存在: {file_path}")
                     return None
 
             # 使用 OnlineRecognizer 类的 from_transducer 静态方法创建实例
@@ -352,15 +357,7 @@ class ASRModelManager(QObject):
                 feature_dim = config_section.get("feature_dim", 80)
                 decoding_method = config_section.get("decoding_method", "greedy_search")
 
-                print(f"开始创建 OnlineRecognizer 实例...")
-                print(f"encoder: {encoder_file}")
-                print(f"decoder: {decoder_file}")
-                print(f"joiner: {joiner_file}")
-                print(f"tokens: {tokens_file}")
-                print(f"num_threads: {num_threads}")
-                print(f"sample_rate: {sample_rate}")
-                print(f"feature_dim: {feature_dim}")
-                print(f"decoding_method: {decoding_method}")
+                logger.debug(f"开始创建 OnlineRecognizer 实例...")
 
                 model = sherpa_onnx.OnlineRecognizer.from_transducer(
                     encoder=encoder_file,  # 已经是完整路径
@@ -372,22 +369,22 @@ class ASRModelManager(QObject):
                     feature_dim=feature_dim,
                     decoding_method=decoding_method
                 )
-                print("成功创建 OnlineRecognizer 实例")
+                logger.info("成功创建 OnlineRecognizer 实例")
             except Exception as e:
-                print(f"使用 from_transducer 创建实例失败: {e}")
+                logger.error(f"使用 from_transducer 创建实例失败: {e}")
                 import traceback
-                print(traceback.format_exc())
+                logger.error(traceback.format_exc())
                 return None
 
             model_type_str = "int8量化" if is_int8 else "标准"
-            print(f"成功加载Sherpa-ONNX {model_type_str}模型: {model_path}")
+            logger.info(f"成功加载Sherpa-ONNX {model_type_str}模型: {model_path}")
 
             return model
 
         except Exception as e:
-            print(f"加载Sherpa模型失败: {e}")
+            logger.error(f"加载Sherpa模型失败: {e}")
             import traceback
-            print(traceback.format_exc())
+            logger.error(traceback.format_exc())
             return None
 
     def _validate_model_path(self, model_path: str, model_type: str = None) -> bool:
@@ -489,10 +486,27 @@ class ASRModelManager(QObject):
         engine_type = self.get_current_engine_type()
         if engine_type == "vosk_small":
             logger.info(f"创建Vosk识别器，引擎类型: {engine_type}")
+
+            # 检查当前引擎是否有create_recognizer方法
+            if hasattr(self.current_engine, 'create_recognizer') and callable(self.current_engine.create_recognizer):
+                logger.info("使用引擎的create_recognizer方法创建识别器")
+                recognizer = self.current_engine.create_recognizer()
+                if recognizer:
+                    # 确保引擎类型正确
+                    if not hasattr(recognizer, 'engine_type') or recognizer.engine_type != "vosk_small":
+                        recognizer.engine_type = "vosk_small"
+                        logger.info(f"设置识别器的engine_type属性为: vosk_small")
+                    logger.info(f"Vosk识别器创建成功，引擎类型: {engine_type}")
+                    return recognizer
+                else:
+                    logger.error("引擎的create_recognizer方法返回None")
+
+            # 如果引擎没有create_recognizer方法或方法调用失败，使用传统方式创建
+            logger.info("使用传统方式创建Vosk识别器")
             model = vosk.Model(self.current_engine.model_path)
             recognizer = vosk.KaldiRecognizer(model, 16000)
             # 设置引擎类型，确保与模型类型一致
-            recognizer.engine_type = engine_type
+            recognizer.engine_type = "vosk_small"
             logger.info(f"Vosk识别器创建成功，引擎类型: {engine_type}")
             return recognizer
 
@@ -632,8 +646,8 @@ class ASRModelManager(QObject):
                         return False
 
                     # 为VoskASR实例添加engine_type属性，确保与模型类型一致
-                    self.current_engine.engine_type = engine_type
-                    sherpa_logger.info(f"设置VoskASR引擎类型为: {engine_type}")
+                    self.current_engine.engine_type = "vosk_small"
+                    sherpa_logger.info(f"设置VoskASR引擎类型为: vosk_small")
 
                     sherpa_logger.info("VoskASR 引擎初始化成功")
                 except Exception as e:
@@ -711,8 +725,21 @@ class ASRModelManager(QObject):
             if current_engine_type != engine_type:
                 sherpa_logger.warning(f"初始化后的引擎类型 {current_engine_type} 与请求的引擎类型 {engine_type} 不一致")
 
+                # 对于vosk_small模型，强制设置正确的引擎类型
+                if engine_type == "vosk_small":
+                    sherpa_logger.info(f"强制设置引擎类型为 vosk_small")
+
+                    # 为引擎设置正确的engine_type属性
+                    if hasattr(self.current_engine, 'engine_type'):
+                        old_engine_type = self.current_engine.engine_type
+                        self.current_engine.engine_type = "vosk_small"
+                        sherpa_logger.info(f"引擎的engine_type属性已从 {old_engine_type} 更新为: vosk_small")
+
+                    # 更新模型类型
+                    self.model_type = "vosk_small"
+                    sherpa_logger.info(f"模型类型已更新为: vosk_small")
                 # 如果用户明确选择了一个模型类型，则保持该类型不变
-                if self.model_type and self.model_type == engine_type:
+                elif self.model_type and self.model_type == engine_type:
                     sherpa_logger.info(f"保持用户选择的模型类型: {self.model_type}")
 
                     # 为引擎设置正确的engine_type属性
@@ -861,8 +888,64 @@ class ASRModelManager(QObject):
             file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
             sherpa_logger.info(f"文件大小: {file_size:.2f} MB")
 
-            # 调用引擎的 transcribe_file 方法
-            result = self.current_engine.transcribe_file(file_path)
+            # 对于vosk_small引擎，确保使用正确的方式处理
+            if engine_type == "vosk_small":
+                sherpa_logger.info("使用vosk_small引擎转录文件")
+
+                # 检查文件是否为WAV格式
+                if not file_path.lower().endswith('.wav'):
+                    sherpa_logger.warning(f"文件不是WAV格式: {file_path}")
+                    sherpa_logger.info("尝试使用文件转录器进行转换和转录")
+
+                    # 使用文件转录器处理非WAV文件
+                    from src.core.audio.file_transcriber import FileTranscriber
+                    from src.core.signals import TranscriptionSignals
+
+                    # 创建信号和转录器
+                    signals = TranscriptionSignals()
+                    transcriber = FileTranscriber(signals)
+
+                    # 收集转录结果
+                    transcription_result = []
+
+                    # 连接信号
+                    def on_new_text(text):
+                        if text and not text.startswith("[使用") and not text.startswith("PARTIAL:"):
+                            transcription_result.append(text)
+
+                    signals.new_text.connect(on_new_text)
+
+                    # 开始转录
+                    transcriber.start_transcription(file_path, self.current_engine)
+
+                    # 等待转录完成
+                    import time
+                    max_wait = 300  # 最多等待5分钟
+                    start_time = time.time()
+
+                    while transcriber.is_transcribing and time.time() - start_time < max_wait:
+                        time.sleep(0.5)
+
+                    # 如果超时，强制停止
+                    if transcriber.is_transcribing:
+                        sherpa_logger.warning("转录超时，强制停止")
+                        transcriber.stop_transcription()
+
+                    # 合并结果
+                    if transcription_result:
+                        result = " ".join(transcription_result)
+                        sherpa_logger.info(f"使用文件转录器获取到结果")
+                    else:
+                        sherpa_logger.warning("使用文件转录器没有获取到结果")
+                        result = None
+                else:
+                    # 直接调用引擎的 transcribe_file 方法
+                    sherpa_logger.info("直接调用引擎的transcribe_file方法")
+                    result = self.current_engine.transcribe_file(file_path)
+            else:
+                # 其他引擎直接调用 transcribe_file 方法
+                sherpa_logger.info(f"使用{engine_type}引擎转录文件")
+                result = self.current_engine.transcribe_file(file_path)
 
             # 记录转录结果
             if result:
@@ -916,6 +999,19 @@ class ASRModelManager(QObject):
         sherpa_logger.debug(f"self.current_engine = {self.current_engine}")
         sherpa_logger.debug(f"self.model_type = {self.model_type}")
 
+        # 对于VoskASR引擎，直接返回vosk_small
+        if isinstance(self.current_engine, VoskASR):
+            sherpa_logger.debug("当前引擎是VoskASR，直接返回vosk_small")
+            # 确保引擎的engine_type属性也是正确的
+            if hasattr(self.current_engine, 'engine_type') and self.current_engine.engine_type != "vosk_small":
+                sherpa_logger.info(f"修正VoskASR引擎的engine_type属性: {self.current_engine.engine_type} -> vosk_small")
+                self.current_engine.engine_type = "vosk_small"
+            # 确保model_type也是正确的
+            if self.model_type != "vosk_small":
+                sherpa_logger.info(f"修正model_type: {self.model_type} -> vosk_small")
+                self.model_type = "vosk_small"
+            return "vosk_small"
+
         # 如果已经有明确设置的model_type，优先使用它
         if self.model_type and self.current_engine:
             sherpa_logger.debug(f"使用已设置的模型类型: {self.model_type}")
@@ -923,12 +1019,8 @@ class ASRModelManager(QObject):
             # 验证当前引擎是否与model_type匹配
             is_match = False
 
-            # 检查VoskASR
-            if self.model_type == "vosk" and isinstance(self.current_engine, VoskASR):
-                is_match = True
-
             # 检查SherpaOnnxASR
-            elif isinstance(self.current_engine, SherpaOnnxASR):
+            if isinstance(self.current_engine, SherpaOnnxASR):
                 # 检查是否是0626模型
                 if "0626" in self.model_type:
                     model_dir = getattr(self.current_engine, 'model_dir', '')
@@ -960,6 +1052,11 @@ class ASRModelManager(QObject):
             sherpa_logger.debug("当前引擎是 VoskASR")
             # 使用vosk_small作为引擎类型，与配置文件中的模型类型保持一致
             engine_type = "vosk_small"
+
+            # 确保引擎的engine_type属性也是正确的
+            if hasattr(self.current_engine, 'engine_type') and self.current_engine.engine_type != "vosk_small":
+                sherpa_logger.info(f"修正VoskASR引擎的engine_type属性: {self.current_engine.engine_type} -> vosk_small")
+                self.current_engine.engine_type = "vosk_small"
         # 检查是否有engine_type属性（适用于SherpaRecognizer适配器类）
         elif hasattr(self.current_engine, 'engine_type') and self.current_engine.engine_type:
             sherpa_logger.debug(f"当前引擎有engine_type属性: {self.current_engine.engine_type}")

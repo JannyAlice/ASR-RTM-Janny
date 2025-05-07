@@ -302,8 +302,11 @@ class MainWindow(QMainWindow):
 
         sherpa_logger.info("开始按钮被点击")
 
-        # 获取当前模型和引擎信息
-        model_type = self.model_manager.model_type
+        # 强制使用vosk_small模型
+        model_type = "vosk_small"
+        self.model_manager.model_type = "vosk_small"
+
+        # 获取当前引擎信息
         engine_type = self.model_manager.get_current_engine_type()
         engine_info = type(self.model_manager.current_engine).__name__ if self.model_manager.current_engine else "None"
 
@@ -626,7 +629,15 @@ class MainWindow(QMainWindow):
 
                 # 生成带时间戳的文件名
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"transcript_{timestamp}.txt"
+
+                # 获取当前模型类型
+                model_type = self.model_manager.model_type if hasattr(self.model_manager, 'model_type') else "unknown"
+
+                # 确定转录类型（在线或文件）
+                transcription_type = "FILE" if self.is_file_mode else "ONLINE"
+
+                # 生成文件名，包含明显的转录类型标识和自动保存标记
+                filename = f"transcript_{transcription_type}_{model_type}_{timestamp}_AUTO.txt"
 
                 # 完整的保存路径
                 save_path = os.path.join(save_dir, filename)
@@ -890,7 +901,15 @@ class MainWindow(QMainWindow):
 
                 # 生成带时间戳的文件名
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"transcript_{timestamp}.txt"
+
+                # 获取当前模型类型
+                model_type = self.model_manager.model_type if hasattr(self.model_manager, 'model_type') else "unknown"
+
+                # 确定转录类型（在线或文件）
+                transcription_type = "FILE" if self.is_file_mode else "ONLINE"
+
+                # 生成文件名，包含明显的转录类型标识和自动保存标记
+                filename = f"transcript_{transcription_type}_{model_type}_{timestamp}_AUTO.txt"
 
                 # 完整的保存路径
                 save_path = os.path.join(save_dir, filename)
@@ -1053,8 +1072,11 @@ class MainWindow(QMainWindow):
                 # 获取当前模型类型
                 model_type = self.model_manager.model_type if hasattr(self.model_manager, 'model_type') else "unknown"
 
-                # 生成文件名
-                filename = f"transcript_{model_type}_{timestamp}.txt"
+                # 确定转录类型（在线或文件）
+                transcription_type = "FILE" if self.is_file_mode else "ONLINE"
+
+                # 生成文件名，包含明显的转录类型标识
+                filename = f"transcript_{transcription_type}_{model_type}_{timestamp}.txt"
 
                 # 完整的保存路径
                 save_path = os.path.join(save_dir, filename)
