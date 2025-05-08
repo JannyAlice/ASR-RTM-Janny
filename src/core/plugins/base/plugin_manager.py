@@ -1,75 +1,80 @@
-from typing import Dict, Optional, Type
-from .plugin_interface import PluginInterface
-from .plugin_event import PluginEventSystem
+"""插件管理器模块"""
 import logging
+from typing import Any, Dict, Optional, Type
+from .plugin_base import PluginInterface
+from .plugin_registry import PluginRegistry
 
 logger = logging.getLogger(__name__)
 
 class PluginManager:
-    """插件管理器，负责插件的注册、加载和生命周期管理"""
+    """插件管理器类"""
     
     def __init__(self):
         self._plugins: Dict[str, PluginInterface] = {}
-        self._plugin_classes: Dict[str, Type[PluginInterface]] = {}
-        self.event_system = PluginEventSystem()
+        self._registry = PluginRegistry()
+        self._config: Dict[str, Any] = {}
         
-    def register_plugin_class(self, plugin_id: str, plugin_class: Type[PluginInterface]) -> None:
-        """注册插件类"""
-        if plugin_id in self._plugin_classes:
-            logger.warning(f"Plugin {plugin_id} is already registered, overwriting...")
-        self._plugin_classes[plugin_id] = plugin_class
-        logger.info(f"Registered plugin class: {plugin_id}")
+    def register_plugin(self, plugin_id: str, plugin_class: Type[PluginInterface]) -> None:
+        """注册插件"""
+        self._registry.register(plugin_id, plugin_class)
         
-    def load_plugin(self, plugin_id: str, config: dict) -> bool:
-        """加载插件"""
-        if plugin_id not in self._plugin_classes:
-            logger.error(f"Plugin {plugin_id} is not registered")
-            return False
-            
-        if plugin_id in self._plugins:
-            logger.warning(f"Plugin {plugin_id} is already loaded")
-            return True
-            
-        try:
-            plugin = self._plugin_classes[plugin_id]()
-            if plugin.initialize(config):
-                self._plugins[plugin_id] = plugin
-                logger.info(f"Successfully loaded plugin: {plugin_id}")
-                return True
-            else:
-                logger.error(f"Failed to initialize plugin: {plugin_id}")
-                return False
-        except Exception as e:
-            logger.error(f"Error loading plugin {plugin_id}: {e}")
-            return False
-            
-    def unload_plugin(self, plugin_id: str) -> bool:
-        """卸载插件"""
-        if plugin_id not in self._plugins:
-            logger.warning(f"Plugin {plugin_id} is not loaded")
-            return False
-            
-        try:
-            plugin = self._plugins[plugin_id]
-            plugin.cleanup()
-            del self._plugins[plugin_id]
-            logger.info(f"Successfully unloaded plugin: {plugin_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Error unloading plugin {plugin_id}: {e}")
-            return False
-            
+    def configure(self, config: Dict[str, Any]) -> None:
+        """配置插件管理器
+        
+        Args:
+            config: 配置字典
+        """
+        self._config = config
+        
     def get_plugin(self, plugin_id: str) -> Optional[PluginInterface]:
-        """获取已加载的插件实例"""
+        """获取插件实例"""
         return self._plugins.get(plugin_id)
         
-    def get_all_plugins(self) -> Dict[str, PluginInterface]:
-        """获取所有已加载的插件"""
-        return self._plugins.copy()
+    def load_plugins(self, plugin_type: str) -> Dict[str, PluginInterface]:
+        """加载指定类型的所有插件
         
-    def shutdown(self) -> None:
-        """关闭插件管理器，清理所有插件"""
-        for plugin_id in list(self._plugins.keys()):
-            self.unload_plugin(plugin_id)
-        self.event_system.clear()
-        logger.info("Plugin manager shutdown complete")
+        Args:
+            plugin_type: 插件类型(如'asr')
+            
+        Returns:
+            Dict[str, PluginInterface]: 已加载的插件字典
+        """
+        loaded_plugins = {}
+        plugins = self._registry.get_plugins_by_type(plugin_type)
+        
+        for plugin_id, plugin_class in plugins.items():
+            try:
+                # 创建插件实例
+                plugin = plugin_class()
+                
+                # 配置插件
+                if plugin_type in self._config and "models" in self._config[plugin_type]:
+                    plugin_config = self._config[plugin_type]["models"].get(plugin_id)
+                    if plugin_config:
+                        plugin.configure(plugin_config)
+                
+                # 初始化插件
+                if plugin.setup():
+                    self._plugins[plugin_id] = plugin
+                    loaded_plugins[plugin_id] = plugin
+                    logger.info(f"成功加载插件: {plugin_id}")
+                else:
+                    logger.error(f"插件初始化失败: {plugin_id}")
+                    
+            except Exception as e:
+                logger.error(f"加载插件失败 {plugin_id}: {str(e)}")
+                
+        return loaded_plugins
+        
+    def get_registry(self) -> PluginRegistry:
+        """获取插件注册表"""
+        return self._registry
+        
+    def cleanup(self):
+        """清理所有插件资源"""
+        for plugin_id, plugin in self._plugins.items():
+            try:
+                plugin.cleanup()
+            except Exception as e:
+                logger.error(f"清理插件 {plugin_id} 时发生错误: {str(e)}")
+        self._plugins.clear()

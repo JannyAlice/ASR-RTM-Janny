@@ -1,5 +1,6 @@
 """Vosk ASR 插件实现"""
 import os
+import json  # 添加此行
 import logging
 import traceback
 import numpy as np
@@ -62,7 +63,6 @@ class VoskPlugin(ASRPluginBase):
             if self.recognizer.AcceptWaveform(audio_data):
                 result = self.recognizer.Result()
                 # 解析JSON结果获取文本
-                import json
                 text = json.loads(result).get("text", "")
                 return text
             return None

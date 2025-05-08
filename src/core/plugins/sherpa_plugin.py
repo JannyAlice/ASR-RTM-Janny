@@ -1,5 +1,6 @@
 """Sherpa-ONNX ASR 插件实现"""
 import os
+import json
 import logging
 import traceback
 import numpy as np
@@ -7,14 +8,37 @@ from typing import Optional, Dict, Any, Union
 
 from .asr_plugin_base import ASRPluginBase
 
+# 初始化日志记录器
+logger = logging.getLogger(__name__)
+
 try:
     import sherpa_onnx
     HAS_SHERPA_ONNX = True
 except ImportError:
     HAS_SHERPA_ONNX = False
-    print("警告: 未安装 sherpa_onnx 模块，Sherpa-ONNX 功能将不可用")
+    logger.warning("警告: 未安装 sherpa_onnx 模块，Sherpa-ONNX 功能将不可用")
 
-logger = logging.getLogger(__name__)
+# 尝试导入soundfile，如果失败则降级到只支持wav格式
+try:
+    import soundcard as sf
+    HAS_SOUNDFILE = True
+except ImportError:
+    HAS_SOUNDFILE = False
+    logger.warning(
+        "未安装 soundfile 模块，只能处理WAV格式音频。\n"
+        "要处理其他格式音频，请运行: pip install soundfile"
+    )
+
+# 尝试导入soundcard，如果失败则降级到只支持wav格式
+try:
+    import soundcard as sc
+    HAS_SOUNDCARD = True
+except ImportError:
+    HAS_SOUNDCARD = False
+    logger.warning(
+        "未安装 soundcard 模块，只能处理WAV格式音频。\n"
+        "要处理其他格式音频，请运行: pip install soundcard"
+    )
 
 class SherpaOnnxPlugin(ASRPluginBase):
     """Sherpa-ONNX ASR 插件实现"""
@@ -126,18 +150,23 @@ class SherpaOnnxPlugin(ASRPluginBase):
             return None
             
         try:
-            import wave
-            import soundfile as sf
-            
-            # 读取音频文件
+            # 处理 WAV 文件
             if file_path.endswith('.wav'):
+                import wave
                 with wave.open(file_path, 'rb') as wf:
                     framerate = wf.getframerate()
                     audio_data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
             else:
-                audio_data, framerate = sf.read(file_path)
-                if audio_data.dtype != np.int16:
-                    audio_data = (audio_data * 32768).astype(np.int16)
+                # 处理其他音频格式
+                try:
+                    import soundcard as sc
+                    with sc.open_audio_file(file_path) as f:
+                        audio_data = f.read()
+                        if audio_data.dtype != np.int16:
+                            audio_data = (audio_data * 32768).astype(np.int16)
+                except ImportError:
+                    logger.error("需要安装 soundcard 模块来处理非WAV格式音频。运行: pip install soundcard")
+                    return None
                     
             # 创建识别器
             recognizer = self.create_recognizer()

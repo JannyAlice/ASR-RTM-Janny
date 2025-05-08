@@ -1,3 +1,4 @@
+"""测试配置文件"""
 import os
 import sys
 import pytest

@@ -32,12 +32,13 @@ class TranscriptionError(VoskPluginError):
 class VoskPlugin(ASRPlugin):
     """Vosk ASR 插件实现"""
     
+    plugin_type = "asr"  # 插件类型
+    
     def __init__(self):
         super().__init__()
-        self.model = None
-        self._sample_rate = 16000
-        self._config = None
-        logger.debug("VoskPlugin initialized with sample_rate=%d", self._sample_rate)
+        self.model_type = "standard"  # 改为与配置文件一致
+        self._model = None
+        self._recognizer = None
         
     def initialize(self, config: Dict[str, Any]) -> bool:
         """初始化插件"""

@@ -1,13 +1,10 @@
-"""ASR 插件系统"""
-from .asr_plugin_base import ASRPluginBase
-from .vosk_plugin import VoskPlugin
-from .sherpa_plugin import SherpaOnnxPlugin
-from .plugin_registry import PluginRegistry, plugin_registry
+"""插件系统包"""
+from .base.plugin_manager import PluginManager
+from .base.plugin_registry import PluginRegistry
+from .base.plugin_interface import PluginInterface
 
 __all__ = [
-    'ASRPluginBase',
-    'VoskPlugin',
-    'SherpaOnnxPlugin',
+    'PluginManager',
     'PluginRegistry',
-    'plugin_registry'
+    'PluginInterface'
 ]

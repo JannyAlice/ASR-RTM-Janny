@@ -7,6 +7,7 @@ import sys
 import logging
 import subprocess
 import json
+from typing import Dict, Any  # 添加类型导入
 from PyQt5.QtWidgets import QMainWindow, QVBoxLayout, QWidget, QFileDialog, QMessageBox
 from PyQt5.QtCore import Qt, pyqtSlot, QTimer
 
@@ -28,71 +29,23 @@ except ImportError:
 
 class MainWindow(QMainWindow):
     """主窗口类"""
-
-    def __init__(self, recognizer=None):
-        """初始化主窗口"""
+    
+    def __init__(self, model_manager: ASRModelManager, config: Dict[str, Any]):
+        """初始化主窗口
+        
+        Args:
+            model_manager: ASR 模型管理器
+            config: 配置信息
+        """
         super().__init__()
-        self.recognizer = recognizer
-
-        # 检查COM是否已初始化，如果没有则初始化
-        # 导入日志工具
-        try:
-            from src.utils.sherpa_logger import sherpa_logger
-        except ImportError:
-            # 如果导入失败，创建一个简单的日志记录器
-            class DummyLogger:
-                def debug(self, msg): print(f"DEBUG: {msg}")
-                def info(self, msg): print(f"INFO: {msg}")
-                def warning(self, msg): print(f"WARNING: {msg}")
-                def error(self, msg): print(f"ERROR: {msg}")
-            sherpa_logger = DummyLogger()
-
-        # 检查COM状态并初始化（如果需要）
-        if not hasattr(com_handler, "_initialized") or not com_handler._initialized:
-            sherpa_logger.info("MainWindow中初始化COM...")
-            com_handler.initialize_com()
-            sherpa_logger.info("MainWindow中COM初始化成功")
-        else:
-            sherpa_logger.info("COM已经初始化，MainWindow跳过初始化")
-
-        # 创建信号
-        self.signals = TranscriptionSignals()
-
-        # 创建模型管理器
-        self.model_manager = ASRModelManager()
-
-        # 创建音频处理器
-        self.audio_processor = AudioProcessor(self.signals)
-
-        # 创建文件转录器（如果可用）
-        self.file_transcriber = None
-        if HAS_FILE_TRANSCRIBER:
-            self.file_transcriber = FileTranscriber(self.signals)
-
-        # 加载配置
-        self.config = config_manager
-
-        # 转录模式标志
-        self.is_file_mode = False
-        self.file_path = None
-
-        # 初始化UI
-        self._init_ui()
-
-        # 连接信号
+        self.model_manager = model_manager
+        self.config = config
+        
+        self._setup_ui()
         self._connect_signals()
 
-        # 加载窗口状态
-        self.load_window_state()
-
-        # 加载默认模型
-        self._load_default_model()
-
-        # 加载音频设备
-        self._load_audio_devices()
-
-    def _init_ui(self):
-        """初始化UI"""
+    def _setup_ui(self):
+        """设置UI"""
         # 设置窗口属性
         self.setWindowTitle("实时字幕")
         self.resize(800, 400)
