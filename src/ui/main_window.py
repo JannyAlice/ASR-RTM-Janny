@@ -7,7 +7,6 @@ import sys
 import logging
 import subprocess
 import json
-from typing import Dict, Any  # 添加类型导入
 from PyQt5.QtWidgets import QMainWindow, QVBoxLayout, QWidget, QFileDialog, QMessageBox
 from PyQt5.QtCore import Qt, pyqtSlot, QTimer
 
@@ -29,23 +28,65 @@ except ImportError:
 
 class MainWindow(QMainWindow):
     """主窗口类"""
-    
-    def __init__(self, model_manager: ASRModelManager, config: Dict[str, Any]):
-        """初始化主窗口
-        
-        Args:
-            model_manager: ASR 模型管理器
-            config: 配置信息
-        """
+
+    def __init__(self, model_manager=None, config=None):
+        """初始化主窗口"""
         super().__init__()
-        self.model_manager = model_manager
-        self.config = config
-        
-        self._setup_ui()
+
+        # 导入日志工具
+        try:
+            from src.utils.sherpa_logger import sherpa_logger
+        except ImportError:
+            # 如果导入失败，创建一个简单的日志记录器
+            class DummyLogger:
+                def debug(self, msg): print(f"DEBUG: {msg}")
+                def info(self, msg): print(f"INFO: {msg}")
+                def warning(self, msg): print(f"WARNING: {msg}")
+                def error(self, msg): print(f"ERROR: {msg}")
+            sherpa_logger = DummyLogger()
+
+        # 注释掉COM初始化代码，因为它已经在main.py中完成
+        # 这里只记录COM状态
+        sherpa_logger.info("MainWindow初始化 - COM环境应该已经在main.py中初始化")
+
+        # 创建信号
+        self.signals = TranscriptionSignals()
+
+        # 设置模型管理器
+        self.model_manager = model_manager if model_manager else ASRModelManager()
+
+        # 创建音频处理器
+        self.audio_processor = AudioProcessor(self.signals)
+
+        # 创建文件转录器（如果可用）
+        self.file_transcriber = None
+        if HAS_FILE_TRANSCRIBER:
+            self.file_transcriber = FileTranscriber(self.signals)
+
+        # 设置配置
+        self.config = config if config else config_manager
+
+        # 转录模式标志
+        self.is_file_mode = False
+        self.file_path = None
+
+        # 初始化UI
+        self._init_ui()
+
+        # 连接信号
         self._connect_signals()
 
-    def _setup_ui(self):
-        """设置UI"""
+        # 加载窗口状态
+        self.load_window_state()
+
+        # 加载默认模型
+        self._load_default_model()
+
+        # 加载音频设备
+        self._load_audio_devices()
+
+    def _init_ui(self):
+        """初始化UI"""
         # 设置窗口属性
         self.setWindowTitle("实时字幕")
         self.resize(800, 400)
@@ -79,22 +120,58 @@ class MainWindow(QMainWindow):
     def _apply_window_style(self):
         """应用窗口样式"""
         # 获取窗口配置
-        window_config = self.config.get_config('window', {})
-        opacity = window_config.get('opacity', 0.9)
+        try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
 
-        # 保存当前窗口标志位
-        current_flags = self.windowFlags()
+            # 检查self.config的类型
+            sherpa_logger.debug(f"self.config类型: {type(self.config)}")
 
-        # 设置窗口置顶
-        if window_config.get('always_on_top', True):
-            # 确保保留其他标志位
-            new_flags = current_flags | Qt.WindowStaysOnTopHint
-            if new_flags != current_flags:
-                self.setWindowFlags(new_flags)
-                self.show()  # 仅在标志位发生变化时重新显示窗口
+            # 根据self.config的类型获取窗口配置
+            if hasattr(self.config, 'get_config'):
+                # 如果是ConfigManager实例
+                sherpa_logger.debug("使用ConfigManager.get_config方法获取窗口配置")
+                window_config = self.config.get_config('window', {})
+            elif isinstance(self.config, dict):
+                # 如果是字典
+                sherpa_logger.debug("使用字典方式获取窗口配置")
+                window_config = self.config.get('window', {})
+            else:
+                # 如果是其他类型，使用默认值
+                sherpa_logger.warning(f"未知的config类型: {type(self.config)}，使用默认配置")
+                window_config = {}
 
-        # 设置窗口透明度
-        self.setWindowOpacity(opacity)
+            sherpa_logger.debug(f"窗口配置: {window_config}")
+            opacity = window_config.get('opacity', 0.9)
+            sherpa_logger.debug(f"窗口透明度: {opacity}")
+
+            # 保存当前窗口标志位
+            current_flags = self.windowFlags()
+
+            # 设置窗口置顶
+            if window_config.get('always_on_top', True):
+                # 确保保留其他标志位
+                new_flags = current_flags | Qt.WindowStaysOnTopHint
+                if new_flags != current_flags:
+                    self.setWindowFlags(new_flags)
+                    self.show()  # 仅在标志位发生变化时重新显示窗口
+
+            # 设置窗口透明度
+            self.setWindowOpacity(opacity)
+            sherpa_logger.debug("窗口样式应用完成")
+        except Exception as e:
+            print(f"应用窗口样式时出错: {e}")
+            import traceback
+            print(traceback.format_exc())
 
     def _connect_signals(self):
         """连接信号"""
@@ -1431,6 +1508,79 @@ class MainWindow(QMainWindow):
         dialog.setLayout(layout)
         dialog.exec_()
 
+    def save_asr_config(self):
+        """保存ASR配置"""
+        try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
+            # 获取输入值
+            try:
+                enable_endpoint = int(self.enable_endpoint_edit.text())
+                rule1_min_trailing_silence = float(self.rule1_edit.text())
+                rule2_min_trailing_silence = float(self.rule2_edit.text())
+                rule3_min_utterance_length = int(self.rule3_edit.text())
+            except ValueError as e:
+                sherpa_logger.error(f"输入值格式错误: {e}")
+                self.signals.error_occurred.emit(f"输入值格式错误: {e}")
+                return
+
+            # 创建ASR配置字典
+            asr_config = {
+                "enable_endpoint": enable_endpoint,
+                "rule1_min_trailing_silence": rule1_min_trailing_silence,
+                "rule2_min_trailing_silence": rule2_min_trailing_silence,
+                "rule3_min_utterance_length": rule3_min_utterance_length
+            }
+
+            sherpa_logger.debug(f"保存ASR配置: {asr_config}")
+
+            # 检查self.config的类型
+            sherpa_logger.debug(f"save_asr_config: self.config类型: {type(self.config)}")
+
+            # 根据self.config的类型更新配置
+            if hasattr(self.config, 'update_and_save'):
+                # 如果是ConfigManager实例
+                sherpa_logger.debug("使用ConfigManager.update_and_save方法更新配置")
+                self.config.update_and_save("asr", asr_config)
+            elif isinstance(self.config, dict):
+                # 如果是字典，直接更新字典
+                sherpa_logger.debug("使用字典方式更新配置")
+                if "asr" not in self.config:
+                    self.config["asr"] = {}
+                self.config["asr"].update(asr_config)
+                sherpa_logger.debug("配置已更新，但无法保存到文件（字典模式）")
+            else:
+                # 如果是其他类型，记录警告
+                sherpa_logger.warning(f"未知的config类型: {type(self.config)}，无法保存ASR配置")
+                return
+
+            # 更新当前引擎的配置
+            if self.model_manager and self.model_manager.current_engine:
+                sherpa_logger.debug("更新当前引擎的配置")
+                for key, value in asr_config.items():
+                    self.model_manager.current_engine.config[key] = value
+                sherpa_logger.debug(f"当前引擎配置已更新: {self.model_manager.current_engine.config}")
+
+            # 显示成功消息
+            self.signals.status_updated.emit("ASR配置已保存")
+            sherpa_logger.info("ASR配置已保存")
+
+        except Exception as e:
+            print(f"保存ASR配置错误: {e}")
+            import traceback
+            print(traceback.format_exc())
+            self.signals.error_occurred.emit(f"保存ASR配置错误: {e}")
+
     def search_model_documentation(self):
         """搜索模型文档"""
         # 这里是搜索模型文档的占位代码
@@ -1460,6 +1610,18 @@ class MainWindow(QMainWindow):
     def save_window_state(self):
         """保存窗口状态到配置文件"""
         try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
             # 获取窗口几何信息
             geometry = self.geometry()
 
@@ -1472,11 +1634,33 @@ class MainWindow(QMainWindow):
                 "opacity": self.windowOpacity()
             }
 
-            # 更新配置
-            self.config.update_and_save("window", window_state)
+            sherpa_logger.debug(f"保存窗口状态: {window_state}")
+
+            # 检查self.config的类型
+            sherpa_logger.debug(f"save_window_state: self.config类型: {type(self.config)}")
+
+            # 根据self.config的类型更新配置
+            if hasattr(self.config, 'update_and_save'):
+                # 如果是ConfigManager实例
+                sherpa_logger.debug("使用ConfigManager.update_and_save方法更新配置")
+                self.config.update_and_save("window", window_state)
+            elif isinstance(self.config, dict):
+                # 如果是字典，直接更新字典
+                sherpa_logger.debug("使用字典方式更新配置")
+                if "window" not in self.config:
+                    self.config["window"] = {}
+                self.config["window"].update(window_state)
+                sherpa_logger.debug("配置已更新，但无法保存到文件（字典模式）")
+            else:
+                # 如果是其他类型，记录警告
+                sherpa_logger.warning(f"未知的config类型: {type(self.config)}，无法保存窗口状态")
+
+            sherpa_logger.debug("窗口状态保存完成")
 
         except Exception as e:
-            logging.error(f"保存窗口状态错误: {e}")
+            print(f"保存窗口状态错误: {e}")
+            import traceback
+            print(traceback.format_exc())
 
     def closeEvent(self, event):
         """
@@ -1535,8 +1719,39 @@ class MainWindow(QMainWindow):
     def load_window_state(self):
         """从配置文件加载窗口状态"""
         try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，创建一个简单的日志记录器
+                class DummyLogger:
+                    def debug(self, msg): print(f"DEBUG: {msg}")
+                    def info(self, msg): print(f"INFO: {msg}")
+                    def warning(self, msg): print(f"WARNING: {msg}")
+                    def error(self, msg): print(f"ERROR: {msg}")
+                sherpa_logger = DummyLogger()
+
+            # 检查self.config的类型
+            sherpa_logger.debug(f"load_window_state: self.config类型: {type(self.config)}")
+
             # 获取窗口配置
-            window_config = self.config.get_config("window", {})
+            if hasattr(self.config, 'get_config'):
+                # 如果是ConfigManager实例
+                sherpa_logger.debug("使用ConfigManager.get_config方法获取窗口配置")
+                window_config = self.config.get_config("window", {})
+                ui_config = self.config.get_config("ui", {})
+            elif isinstance(self.config, dict):
+                # 如果是字典
+                sherpa_logger.debug("使用字典方式获取窗口配置")
+                window_config = self.config.get("window", {})
+                ui_config = self.config.get("ui", {})
+            else:
+                # 如果是其他类型，使用默认值
+                sherpa_logger.warning(f"未知的config类型: {type(self.config)}，使用默认配置")
+                window_config = {}
+                ui_config = {}
+
+            sherpa_logger.debug(f"窗口配置: {window_config}")
 
             # 设置窗口位置和大小
             if all(key in window_config for key in ["pos_x", "pos_y", "width", "height"]):
@@ -1546,24 +1761,29 @@ class MainWindow(QMainWindow):
                     window_config["width"],
                     window_config["height"]
                 )
+                sherpa_logger.debug(f"设置窗口位置和大小: {window_config['pos_x']}, {window_config['pos_y']}, {window_config['width']}, {window_config['height']}")
 
             # 设置背景模式
             if "background_mode" in window_config:
                 self.set_background_mode(window_config["background_mode"])
+                sherpa_logger.debug(f"设置背景模式: {window_config['background_mode']}")
 
             # 设置透明度
             if "opacity" in window_config:
                 self.setWindowOpacity(window_config["opacity"])
-
-            # 获取UI配置
-            ui_config = self.config.get_config("ui", {})
+                sherpa_logger.debug(f"设置透明度: {window_config['opacity']}")
 
             # 设置字体大小
             if "font_size" in ui_config:
                 self.set_font_size(ui_config["font_size"])
+                sherpa_logger.debug(f"设置字体大小: {ui_config['font_size']}")
+
+            sherpa_logger.debug("窗口状态加载完成")
 
         except Exception as e:
-            logging.error(f"加载窗口状态错误: {e}")
+            print(f"加载窗口状态错误: {e}")
+            import traceback
+            print(traceback.format_exc())
             # 使用默认值
             self.setGeometry(100, 100, 800, 600)
             self.setWindowOpacity(0.7)
