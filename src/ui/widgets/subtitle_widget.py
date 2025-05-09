@@ -3,12 +3,17 @@
 负责字幕的显示和样式管理
 """
 import difflib
+import traceback
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QWidget, QGraphicsOpacityEffect,
                              QScrollArea, QSizePolicy)
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt, pyqtSlot, QTimer
 
 from src.utils.config_manager import config_manager
+from src.utils.logger import get_logger
+
+# 获取日志记录器
+logger = get_logger(__name__)
 
 class SubtitleLabel(QLabel):
     """字幕标签类。"""
@@ -22,10 +27,10 @@ class SubtitleLabel(QLabel):
         super().__init__(parent)
 
         # 加载配置
-        self.config = config_manager
-        self.font_config = self.config.get_ui_config('fonts.subtitle', {})
-        self.colors_config = self.config.get_ui_config('colors', {})
-        self.styles_config = self.config.get_ui_config('styles', {})
+        self.config_manager = config_manager
+        self.font_config = self.config_manager.get_ui_config('fonts', 'subtitle', default={})
+        self.colors_config = self.config_manager.get_ui_config('colors', default={})
+        self.styles_config = self.config_manager.get_ui_config('styles', default={})
 
         # 设置样式
         self._apply_styles()
@@ -35,36 +40,46 @@ class SubtitleLabel(QLabel):
 
     def _apply_styles(self):
         """应用样式。"""
-        # 获取字体配置
-        font_family = self.font_config.get('family', 'Arial')
-        font_size = self.font_config.get('size', {}).get('medium', 24)
-        font_weight = self.font_config.get('weight', 'bold')
-        font_color = self.font_config.get('color', '#FFFFFF')
+        try:
+            # 获取字体配置
+            font_family = self.font_config.get('family', 'Arial')
+            font_size = self.font_config.get('size', {}).get('medium', 24)
+            font_weight = self.font_config.get('weight', 'bold')
+            font_color = self.font_config.get('color', '#FFFFFF')
 
-        # 获取样式配置
-        padding = self.styles_config.get('subtitle_padding', 15)
-        border_radius = self.styles_config.get('subtitle_border_radius', 10)
-        bg_color = self.colors_config.get('subtitle_background', 'rgba(0, 0, 0, 150)')
+            logger.debug(f"字体配置: family={font_family}, size={font_size}, weight={font_weight}, color={font_color}")
 
-        # 设置字体
-        font = QFont(font_family, font_size)
-        font.setBold(font_weight == 'bold')
-        self.setFont(font)
+            # 获取样式配置
+            padding = self.styles_config.get('subtitle_padding', 15)
+            border_radius = self.styles_config.get('subtitle_border_radius', 10)
+            bg_color = self.colors_config.get('subtitle_background', 'rgba(0, 0, 0, 150)')
 
-        # 设置样式表
-        self.setStyleSheet(f"""
-            QLabel {{
-                color: {font_color};
-                background-color: {bg_color};
-                padding: {padding}px;
-                border-radius: {border_radius}px;
-                qproperty-alignment: AlignLeft;
-            }}
-        """)
+            logger.debug(f"样式配置: padding={padding}, border_radius={border_radius}, bg_color={bg_color}")
 
-        # 设置自动换行
-        self.setWordWrap(True)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            # 设置字体
+            font = QFont(font_family, font_size)
+            font.setBold(font_weight == 'bold')
+            self.setFont(font)
+
+            # 设置样式表
+            self.setStyleSheet(f"""
+                QLabel {{
+                    color: {font_color};
+                    background-color: {bg_color};
+                    padding: {padding}px;
+                    border-radius: {border_radius}px;
+                    qproperty-alignment: AlignLeft;
+                }}
+            """)
+
+            # 设置自动换行
+            self.setWordWrap(True)
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+            logger.debug("字幕标签样式应用完成")
+        except Exception as e:
+            logger.error(f"应用样式时出错: {str(e)}")
+            logger.error(traceback.format_exc())
 
     def set_font_size(self, size_key):
         """设置字体大小。
@@ -178,23 +193,11 @@ class SubtitleWidget(QScrollArea):
             str: 格式化后的文本
         """
         try:
-            # 导入 Sherpa-ONNX 日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，创建一个简单的日志记录器
-                class DummyLogger:
-                    def debug(self, msg): print(f"DEBUG: {msg}")
-                    def info(self, msg): print(f"INFO: {msg}")
-                    def warning(self, msg): print(f"WARNING: {msg}")
-                    def error(self, msg): print(f"ERROR: {msg}")
-                sherpa_logger = DummyLogger()
-
             if not text:
                 return text
 
             # 记录原始文本
-            sherpa_logger.debug(f"格式化文本前: '{text}'")
+            logger.debug(f"格式化文本前: '{text}'")
 
             # 检查文本是否已经格式化
             # 如果文本已经首字母大写且末尾有标点符号，则认为已经格式化
@@ -205,7 +208,7 @@ class SubtitleWidget(QScrollArea):
             )
 
             if is_already_formatted:
-                sherpa_logger.debug(f"文本已格式化，跳过: '{text}'")
+                logger.debug(f"文本已格式化，跳过: '{text}'")
                 return text
 
             # 对所有模型统一处理
@@ -228,13 +231,12 @@ class SubtitleWidget(QScrollArea):
                     text = text[:-1] + '?'
 
             # 记录格式化后的文本
-            sherpa_logger.debug(f"格式化文本后: '{text}'")
+            logger.debug(f"格式化文本后: '{text}'")
             return text
 
         except Exception as e:
-            print(f"格式化文本错误: {e}")
-            import traceback
-            print(traceback.format_exc())
+            logger.error(f"格式化文本错误: {str(e)}")
+            logger.error(traceback.format_exc())
             # 如果发生错误，返回原始文本
             return text
 

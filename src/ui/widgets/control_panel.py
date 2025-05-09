@@ -2,11 +2,16 @@
 控制面板模块
 负责提供用户控制界面元素
 """
+import traceback
 from PyQt5.QtWidgets import (QWidget, QPushButton, QHBoxLayout, QVBoxLayout,
                             QProgressBar, QLabel, QComboBox)
 from PyQt5.QtCore import pyqtSignal, pyqtSlot
 
 from src.utils.config_manager import config_manager
+from src.utils.logger import get_logger
+
+# 获取日志记录器
+logger = get_logger(__name__)
 
 class ControlPanel(QWidget):
     """控制面板类"""
@@ -26,9 +31,9 @@ class ControlPanel(QWidget):
         super().__init__(parent)
 
         # 加载配置
-        self.config = config_manager
-        self.colors_config = self.config.get_ui_config('colors', {})
-        self.styles_config = self.config.get_ui_config('styles', {})
+        self.config_manager = config_manager
+        self.colors_config = self.config_manager.get_ui_config('colors', default={})
+        self.styles_config = self.config_manager.get_ui_config('styles', default={})
 
         # 转录模式标志
         self.transcription_mode = "system"  # 默认为系统音频模式
@@ -94,107 +99,117 @@ class ControlPanel(QWidget):
 
     def _apply_styles(self):
         """应用样式"""
-        # 获取颜色配置
-        button_start_color = self.colors_config.get('button_start', 'rgba(50, 150, 50, 200)')
-        button_record_color = self.colors_config.get('button_record', 'rgba(50, 50, 150, 200)')
+        try:
+            # 获取颜色配置
+            button_start_color = self.colors_config.get('button_start', 'rgba(50, 150, 50, 200)')
+            button_record_color = self.colors_config.get('button_record', 'rgba(50, 50, 150, 200)')
 
-        # 获取样式配置
-        button_padding = self.styles_config.get('button_padding', '8px 20px')
-        button_border_radius = self.styles_config.get('button_border_radius', 4)
+            logger.debug(f"按钮颜色配置: start={button_start_color}, record={button_record_color}")
 
-        # 设置按钮样式
-        self.start_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {button_start_color};
-                color: white;
-                border: none;
-                padding: {button_padding};
-                border-radius: {button_border_radius}px;
-            }}
-            QPushButton:hover {{
-                background-color: rgba(60, 170, 60, 220);
-            }}
-            QPushButton:pressed {{
-                background-color: rgba(40, 130, 40, 220);
-            }}
-            QPushButton:disabled {{
-                background-color: rgba(50, 150, 50, 100);
-                color: rgba(255, 255, 255, 120);
-            }}
-        """)
+            # 获取样式配置
+            button_padding = self.styles_config.get('button_padding', '8px 20px')
+            button_border_radius = self.styles_config.get('button_border_radius', 4)
 
-        self.record_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {button_record_color};
-                color: white;
-                border: none;
-                padding: {button_padding};
-                border-radius: {button_border_radius}px;
-            }}
-            QPushButton:hover {{
-                background-color: rgba(60, 60, 170, 220);
-            }}
-            QPushButton:pressed {{
-                background-color: rgba(40, 40, 130, 220);
-            }}
-            QPushButton:disabled {{
-                background-color: rgba(50, 50, 150, 100);
-                color: rgba(255, 255, 255, 120);
-            }}
-        """)
+            logger.debug(f"按钮样式配置: padding={button_padding}, border_radius={button_border_radius}")
 
-        # 设置进度条样式
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #555;
-                border-radius: 3px;
-                text-align: center;
-                background-color: rgba(40, 40, 40, 180);
-                font-weight: bold;
-                color: white;
-            }
-            QProgressBar::chunk {
-                background-color: rgba(74, 144, 226, 180);
-                width: 10px;
-                margin: 0.5px;
-            }
-        """)
+            # 设置按钮样式
+            self.start_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {button_start_color};
+                    color: white;
+                    border: none;
+                    padding: {button_padding};
+                    border-radius: {button_border_radius}px;
+                }}
+                QPushButton:hover {{
+                    background-color: rgba(60, 170, 60, 220);
+                }}
+                QPushButton:pressed {{
+                    background-color: rgba(40, 130, 40, 220);
+                }}
+                QPushButton:disabled {{
+                    background-color: rgba(50, 150, 50, 100);
+                    color: rgba(255, 255, 255, 120);
+                }}
+            """)
 
-        # 设置设备下拉列表样式
-        self.device_combo.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #555;
-                border-radius: 3px;
-                padding: 1px 18px 1px 3px;
-                background-color: rgba(40, 40, 40, 180);
-                color: white;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 15px;
-                border-left-width: 1px;
-                border-left-color: #555;
-                border-left-style: solid;
-                border-top-right-radius: 3px;
-                border-bottom-right-radius: 3px;
-            }
-            QComboBox::down-arrow {
-                image: url(:/images/dropdown.png);
-            }
-            QComboBox QAbstractItemView {
-                border: 1px solid #555;
-                selection-background-color: rgba(74, 144, 226, 180);
-                background-color: rgba(40, 40, 40, 180);
-                color: white;
-            }
-            QComboBox QAbstractItemView::item {
-                min-height: 20px;
-            }
-            QComboBox QAbstractItemView::item:selected {
-                background-color: rgba(74, 144, 226, 180);
-            }
-        """)
+            self.record_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {button_record_color};
+                    color: white;
+                    border: none;
+                    padding: {button_padding};
+                    border-radius: {button_border_radius}px;
+                }}
+                QPushButton:hover {{
+                    background-color: rgba(60, 60, 170, 220);
+                }}
+                QPushButton:pressed {{
+                    background-color: rgba(40, 40, 130, 220);
+                }}
+                QPushButton:disabled {{
+                    background-color: rgba(50, 50, 150, 100);
+                    color: rgba(255, 255, 255, 120);
+                }}
+            """)
+
+            # 设置进度条样式
+            self.progress_bar.setStyleSheet("""
+                QProgressBar {
+                    border: 1px solid #555;
+                    border-radius: 3px;
+                    text-align: center;
+                    background-color: rgba(40, 40, 40, 180);
+                    font-weight: bold;
+                    color: white;
+                }
+                QProgressBar::chunk {
+                    background-color: rgba(74, 144, 226, 180);
+                    width: 10px;
+                    margin: 0.5px;
+                }
+            """)
+
+            # 设置设备下拉列表样式
+            self.device_combo.setStyleSheet("""
+                QComboBox {
+                    border: 1px solid #555;
+                    border-radius: 3px;
+                    padding: 1px 18px 1px 3px;
+                    background-color: rgba(40, 40, 40, 180);
+                    color: white;
+                }
+                QComboBox::drop-down {
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                    width: 15px;
+                    border-left-width: 1px;
+                    border-left-color: #555;
+                    border-left-style: solid;
+                    border-top-right-radius: 3px;
+                    border-bottom-right-radius: 3px;
+                }
+                QComboBox::down-arrow {
+                    image: url(:/images/dropdown.png);
+                }
+                QComboBox QAbstractItemView {
+                    border: 1px solid #555;
+                    selection-background-color: rgba(74, 144, 226, 180);
+                    background-color: rgba(40, 40, 40, 180);
+                    color: white;
+                }
+                QComboBox QAbstractItemView::item {
+                    min-height: 20px;
+                }
+                QComboBox QAbstractItemView::item:selected {
+                    background-color: rgba(74, 144, 226, 180);
+                }
+            """)
+
+            logger.debug("控制面板样式应用完成")
+        except Exception as e:
+            logger.error(f"应用样式时出错: {str(e)}")
+            logger.error(traceback.format_exc())
 
     def _on_transcribe_clicked(self):
         """转录按钮点击处理"""

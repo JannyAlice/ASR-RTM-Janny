@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-
-import os
-# Qt 和 COM 环境变量设置必须在最开始
-os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"  # 启用自动缩放
-os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"    # 禁用高DPI缩放
-os.environ["PYTHONCOM_INITIALIZE"] = "0"          # 禁止 pythoncom 自动初始化
-
 """
 实时语音转录应用程序
 主要功能：
@@ -15,151 +8,100 @@ os.environ["PYTHONCOM_INITIALIZE"] = "0"          # 禁止 pythoncom 自动初�
 4. 配置文件管理
 """
 
-# 然后导入其他库
 import sys
-from pathlib import Path
-import logging
 import traceback
-import json
-from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtWidgets import QApplication
+from pathlib import Path
 
 # 确保能够导入src目录下的模块
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-# 配置日志目录
+# 初始化日志系统
+from src.utils.logger import configure_logging, get_logger, log_system_info
 log_dir = project_root / "logs"
 log_dir.mkdir(exist_ok=True)
-
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_dir / 'main.log', encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+configure_logging(
+    log_dir=str(log_dir),
+    default_level="INFO"
 )
-logger = logging.getLogger(__name__)
+logger = get_logger("main")
 
-# COM初始化标志
-_com_initialized = False
+# 记录系统启动信息
+log_system_info()
 
-def initialize_com():
-    """初始化COM环境"""
-    global _com_initialized
-    if not _com_initialized:
-        try:
-            import pythoncom
-            # 在UI线程中使用单线程模式
-            pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
-            _com_initialized = True
-            logger.info("COM环境初始化成功")
-        except Exception as e:
-            # 检查是否是因为COM已经初始化导致的错误
-            error_msg = str(e).lower()
-            if "already initialized" in error_msg or "cannot change thread mode" in error_msg:
-                logger.info("COM环境已经初始化，继续执行")
-                _com_initialized = True
-                return
-            else:
-                logger.error(f"COM环境初始化失败: {str(e)}")
-                raise
+# 导入Qt应用程序管理器
+from src.utils.qt_app_manager import qt_app_manager, initialize_qt
+from src.utils.qt_compat import log_qt_info
 
-def uninitialize_com():
-    """清理COM环境"""
-    global _com_initialized
-    if _com_initialized:
-        try:
-            import pythoncom
-            pythoncom.CoUninitialize()
-            _com_initialized = False
-            logger.info("COM环境清理完成")
-        except Exception as e:
-            logger.error(f"COM环境清理失败: {str(e)}")
-
-# 推迟导入以避免循环依赖
-# 使用正确的导入路径
-from src.utils.config_manager import ConfigManager
-from src.core.plugins import PluginManager, PluginRegistry
+# 导入配置管理器和插件系统
+from src.utils.config_manager import config_manager
+from src.core.plugins import PluginManager
 from src.core.asr import ASRModelManager
 from src.ui.main_window import MainWindow
 
 def main():
     """主程序入口"""
-    app = None
     try:
-        # 1. 首先创建QApplication实例，确保在创建任何Qt窗口组件之前
-        app = QApplication(sys.argv)
-        app.setQuitOnLastWindowClosed(True)
+        # 1. 初始化Qt环境和应用程序
+        app = initialize_qt()
+        logger.info("Qt环境和应用程序初始化成功")
+        log_qt_info(logger)
 
-        # 2. 然后初始化COM
-        # 使用try-except块包装COM初始化，确保即使失败也能继续执行
-        try:
-            initialize_com()
-        except Exception as e:
-            logger.warning(f"COM初始化警告 (程序将继续): {str(e)}")
-
-        # 3. 加载配置
-        config_manager = ConfigManager()
+        # 2. 加载配置
         config = config_manager.load_config()
         logger.info("配置加载成功")
 
-        # 4. 初始化插件系统
+        # 3. 初始化插件系统
         plugin_manager = PluginManager()
         plugin_manager.configure(config)
+        logger.info("插件系统初始化成功")
 
-        # 5. 获取并配置插件注册表
+        # 4. 获取并配置插件注册表
         plugin_registry = plugin_manager.get_registry()
+        logger.info("获取插件注册表成功")
 
-        # 6. 注册插件
+        # 5. 注册插件
         from src.core.plugins.asr.vosk_plugin import VoskPlugin
         plugin_registry.register("vosk_small", VoskPlugin)
+        logger.info("注册Vosk插件成功")
 
-        # 7. 创建ASR管理器
+        # 6. 创建ASR管理器
         asr_manager = ASRModelManager()
+        logger.info("创建ASR管理器成功")
 
-        # 8. 加载默认模型
-        default_model = config["asr"].get("default_model", "vosk_small")
+        # 7. 加载默认模型
+        default_model = config_manager.get_default_model()
         if not asr_manager.load_model(default_model):
             logger.error(f"加载默认模型失败: {default_model}")
             return 1
+        logger.info(f"加载默认模型成功: {default_model}")
 
-        # 9. 创建主窗口
+        # 8. 创建主窗口
+        from PyQt5.QtCore import Qt
         window = MainWindow(
             model_manager=asr_manager,
-            config=config
+            config_manager=config_manager
         )
         # 确保窗口关闭时被删除
         try:
             window.setAttribute(Qt.WA_DeleteOnClose)
         except AttributeError:
-            # 如果 WA_DeleteOnClose 不可用，尝试其他方法
-            pass
-        window.show()
+            logger.warning("无法设置WA_DeleteOnClose属性")
 
-        # 10. 进入事件循环
-        # PyQt5 使用 exec_()，而 PySide6 使用 exec()
-        if hasattr(app, 'exec_'):
-            return app.exec_()
-        else:
-            return app.exec()
+        window.show()
+        logger.info("主窗口创建并显示成功")
+
+        # 9. 进入事件循环
+        return qt_app_manager.exec_application()
 
     except Exception as e:
         logger.error(f"程序运行错误: {str(e)}")
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
         return 1
     finally:
         # 确保按正确的顺序清理资源
-        if app and app.thread().isRunning():
-            app.quit()
-
-        # 使用try-except块包装COM清理，确保即使失败也能继续执行
-        try:
-            uninitialize_com()
-        except Exception as e:
-            logger.warning(f"COM清理警告: {str(e)}")
+        qt_app_manager.cleanup()
+        logger.info("程序退出，资源已清理")
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -7,6 +7,7 @@ import sys
 import logging
 import subprocess
 import json
+import traceback
 from PyQt5.QtWidgets import QMainWindow, QVBoxLayout, QWidget, QFileDialog, QMessageBox
 from PyQt5.QtCore import Qt, pyqtSlot, QTimer
 
@@ -29,42 +30,44 @@ except ImportError:
 class MainWindow(QMainWindow):
     """主窗口类"""
 
-    def __init__(self, model_manager=None, config=None):
-        """初始化主窗口"""
+    def __init__(self, model_manager=None, config_manager=None):
+        """初始化主窗口
+
+        Args:
+            model_manager: ASR模型管理器实例
+            config_manager: 配置管理器实例
+        """
         super().__init__()
 
-        # 导入日志工具
-        try:
-            from src.utils.sherpa_logger import sherpa_logger
-        except ImportError:
-            # 如果导入失败，创建一个简单的日志记录器
-            class DummyLogger:
-                def debug(self, msg): print(f"DEBUG: {msg}")
-                def info(self, msg): print(f"INFO: {msg}")
-                def warning(self, msg): print(f"WARNING: {msg}")
-                def error(self, msg): print(f"ERROR: {msg}")
-            sherpa_logger = DummyLogger()
+        # 获取日志记录器
+        from src.utils.logger import get_logger
+        self.logger = get_logger(__name__)
+        self.logger.info("初始化MainWindow")
 
-        # 注释掉COM初始化代码，因为它已经在main.py中完成
-        # 这里只记录COM状态
-        sherpa_logger.info("MainWindow初始化 - COM环境应该已经在main.py中初始化")
+        # 设置配置管理器
+        from src.utils.config_manager import config_manager as global_config_manager
+        self.config_manager = config_manager if config_manager else global_config_manager
+        self.logger.debug(f"配置管理器类型: {type(self.config_manager)}")
 
         # 创建信号
         self.signals = TranscriptionSignals()
+        self.logger.debug("创建转录信号")
 
         # 设置模型管理器
         self.model_manager = model_manager if model_manager else ASRModelManager()
+        self.logger.debug(f"设置模型管理器: {type(self.model_manager).__name__}")
 
         # 创建音频处理器
         self.audio_processor = AudioProcessor(self.signals)
+        self.logger.debug("创建音频处理器")
 
         # 创建文件转录器（如果可用）
         self.file_transcriber = None
         if HAS_FILE_TRANSCRIBER:
             self.file_transcriber = FileTranscriber(self.signals)
-
-        # 设置配置
-        self.config = config if config else config_manager
+            self.logger.info("文件转录器创建成功")
+        else:
+            self.logger.warning("文件转录器不可用")
 
         # 转录模式标志
         self.is_file_mode = False
@@ -84,6 +87,8 @@ class MainWindow(QMainWindow):
 
         # 加载音频设备
         self._load_audio_devices()
+
+        self.logger.info("MainWindow初始化完成")
 
     def _init_ui(self):
         """初始化UI"""
@@ -119,40 +124,14 @@ class MainWindow(QMainWindow):
 
     def _apply_window_style(self):
         """应用窗口样式"""
-        # 获取窗口配置
         try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，创建一个简单的日志记录器
-                class DummyLogger:
-                    def debug(self, msg): print(f"DEBUG: {msg}")
-                    def info(self, msg): print(f"INFO: {msg}")
-                    def warning(self, msg): print(f"WARNING: {msg}")
-                    def error(self, msg): print(f"ERROR: {msg}")
-                sherpa_logger = DummyLogger()
+            # 获取窗口配置
+            window_config = self.config_manager.get_window_config()
+            self.logger.debug(f"窗口配置: {window_config}")
 
-            # 检查self.config的类型
-            sherpa_logger.debug(f"self.config类型: {type(self.config)}")
-
-            # 根据self.config的类型获取窗口配置
-            if hasattr(self.config, 'get_config'):
-                # 如果是ConfigManager实例
-                sherpa_logger.debug("使用ConfigManager.get_config方法获取窗口配置")
-                window_config = self.config.get_config('window', {})
-            elif isinstance(self.config, dict):
-                # 如果是字典
-                sherpa_logger.debug("使用字典方式获取窗口配置")
-                window_config = self.config.get('window', {})
-            else:
-                # 如果是其他类型，使用默认值
-                sherpa_logger.warning(f"未知的config类型: {type(self.config)}，使用默认配置")
-                window_config = {}
-
-            sherpa_logger.debug(f"窗口配置: {window_config}")
+            # 获取透明度
             opacity = window_config.get('opacity', 0.9)
-            sherpa_logger.debug(f"窗口透明度: {opacity}")
+            self.logger.debug(f"窗口透明度: {opacity}")
 
             # 保存当前窗口标志位
             current_flags = self.windowFlags()
@@ -167,73 +146,64 @@ class MainWindow(QMainWindow):
 
             # 设置窗口透明度
             self.setWindowOpacity(opacity)
-            sherpa_logger.debug("窗口样式应用完成")
+            self.logger.debug("窗口样式应用完成")
         except Exception as e:
-            print(f"应用窗口样式时出错: {e}")
-            import traceback
-            print(traceback.format_exc())
+            self.logger.error(f"应用窗口样式时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
 
     def _connect_signals(self):
         """连接信号"""
         try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，使用标准日志
-                sherpa_logger = logging.getLogger(__name__)
-
-            sherpa_logger.info("开始连接信号...")
+            self.logger.info("开始连接信号...")
 
             # 连接转录信号 - 添加信号存在性检查
             if hasattr(self.signals, 'new_text'):
-                sherpa_logger.debug("连接 new_text 信号")
+                self.logger.debug("连接 new_text 信号")
                 self.signals.new_text.connect(self.subtitle_widget.update_text)
             else:
-                sherpa_logger.warning("未找到 new_text 信号")
+                self.logger.warning("未找到 new_text 信号")
 
             if hasattr(self.signals, 'progress_updated'):
-                sherpa_logger.debug("连接 progress_updated 信号")
+                self.logger.debug("连接 progress_updated 信号")
                 self.signals.progress_updated.connect(self.control_panel.update_progress)
             else:
-                sherpa_logger.warning("未找到 progress_updated 信号")
+                self.logger.warning("未找到 progress_updated 信号")
 
             if hasattr(self.signals, 'status_updated'):
-                sherpa_logger.debug("连接 status_updated 信号")
+                self.logger.debug("连接 status_updated 信号")
                 self.signals.status_updated.connect(self.control_panel.update_status)
             else:
-                sherpa_logger.warning("未找到 status_updated 信号")
+                self.logger.warning("未找到 status_updated 信号")
 
             if hasattr(self.signals, 'error_occurred'):
-                sherpa_logger.debug("连接 error_occurred 信号")
+                self.logger.debug("连接 error_occurred 信号")
                 self.signals.error_occurred.connect(self._show_error)
             else:
-                sherpa_logger.warning("未找到 error_occurred 信号")
+                self.logger.warning("未找到 error_occurred 信号")
 
             if hasattr(self.signals, 'transcription_finished'):
-                sherpa_logger.debug("连接 transcription_finished 信号")
+                self.logger.debug("连接 transcription_finished 信号")
                 self.signals.transcription_finished.connect(self._on_transcription_finished)
             else:
-                sherpa_logger.warning("未找到 transcription_finished 信号")
+                self.logger.warning("未找到 transcription_finished 信号")
 
             # 连接新增的生命周期信号（如果存在）
             if hasattr(self.signals, 'transcription_started'):
-                sherpa_logger.debug("连接 transcription_started 信号")
+                self.logger.debug("连接 transcription_started 信号")
                 self.signals.transcription_started.connect(self._on_transcription_started)
 
             if hasattr(self.signals, 'transcription_paused'):
-                sherpa_logger.debug("连接 transcription_paused 信号")
+                self.logger.debug("连接 transcription_paused 信号")
                 self.signals.transcription_paused.connect(self._on_transcription_paused)
 
             if hasattr(self.signals, 'transcription_resumed'):
-                sherpa_logger.debug("连接 transcription_resumed 信号")
+                self.logger.debug("连接 transcription_resumed 信号")
                 self.signals.transcription_resumed.connect(self._on_transcription_resumed)
 
-            sherpa_logger.info("信号连接完成")
+            self.logger.info("信号连接完成")
         except Exception as e:
-            logging.error(f"连接信号时出错: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
+            self.logger.error(f"连接信号时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
 
         # 连接控制面板信号
         self.control_panel.start_clicked.connect(self._on_start_clicked)
@@ -241,20 +211,9 @@ class MainWindow(QMainWindow):
 
     def _load_default_model(self):
         """加载默认模型"""
-        # 导入 Sherpa-ONNX 日志工具
-        try:
-            from src.utils.sherpa_logger import sherpa_logger
-        except ImportError:
-            # 如果导入失败，创建一个简单的日志记录器
-            class DummyLogger:
-                def debug(self, msg): print(f"DEBUG: {msg}")
-                def info(self, msg): print(f"INFO: {msg}")
-                def warning(self, msg): print(f"WARNING: {msg}")
-                def error(self, msg): print(f"ERROR: {msg}")
-            sherpa_logger = DummyLogger()
-
-        # 获取默认模型 - 强制使用vosk_small作为默认模型
-        default_model = 'vosk_small'
+        # 获取默认模型
+        default_model = self.config_manager.get_default_model()
+        self.logger.info(f"获取默认模型: {default_model}")
 
         # 更新菜单选中状态
         for key, action in self.menu_bar.model_menu.actions.items():
@@ -265,14 +224,15 @@ class MainWindow(QMainWindow):
         if self.model_manager.load_model(default_model):
             # 获取模型显示名称
             model_display_name = self._get_model_display_name(default_model)
+            self.logger.debug(f"模型显示名称: {model_display_name}")
 
             # 获取引擎类型
             engine_type = self.model_manager.get_current_engine_type()
-            sherpa_logger.info(f"默认引擎类型: {engine_type}")
+            self.logger.info(f"默认引擎类型: {engine_type}")
 
             # 更新字幕窗口的引擎类型
             self.subtitle_widget.current_engine_type = engine_type
-            sherpa_logger.info(f"更新字幕窗口的引擎类型: {engine_type}")
+            self.logger.info(f"更新字幕窗口的引擎类型: {engine_type}")
 
             # 更新状态栏
             self.signals.status_updated.emit(f"已加载ASR模型: {model_display_name}")
@@ -284,8 +244,12 @@ class MainWindow(QMainWindow):
             # 设置字幕窗口文本
             self.subtitle_widget.transcript_text = []
             self.subtitle_widget.subtitle_label.setText(info_text)
+
+            self.logger.info(f"成功加载默认模型: {default_model}")
         else:
-            self.signals.error_occurred.emit(f"加载默认模型 {default_model} 失败")
+            error_msg = f"加载默认模型 {default_model} 失败"
+            self.logger.error(error_msg)
+            self.signals.error_occurred.emit(error_msg)
 
     def _load_audio_devices(self):
         """加载音频设备"""

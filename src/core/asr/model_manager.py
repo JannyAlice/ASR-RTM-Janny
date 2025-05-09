@@ -71,18 +71,19 @@ class ASRModelManager(QObject):
         # 创建信号管理器
         self.signals = SignalManager()
 
-        self.config = config_manager
-        # 直接从 config.json 获取模型配置
-        self.models_config = {}
-        if 'asr' in self.config.config and 'models' in self.config.config['asr']:
-            self.models_config = self.config.config['asr']['models']
-        # 不再打印完整的配置信息，避免控制台输出过多
-        logger.debug("ASRModelManager初始化完成")
+        # 设置配置管理器
+        self.config_manager = config_manager
+
+        # 从配置管理器获取模型配置
+        self.models_config = self.config_manager.get_all_models()
+        logger.debug(f"加载的模型配置数量: {len(self.models_config)}")
+
+        # 初始化模型相关变量
         self.current_model = None
         self.model_path = None
 
-        # 从配置文件获取默认模型类型，强制使用vosk_small
-        self.model_type = "vosk_small"
+        # 从配置文件获取默认模型类型
+        self.model_type = self.config_manager.get_default_model()
         logger.info(f"使用默认模型类型: {self.model_type}")
 
         # 用于音频转录的引擎
@@ -553,16 +554,8 @@ class ASRModelManager(QObject):
         Returns:
             Any: 配置值或默认值
         """
-        parts = path.split('.')
-        config = self.config.config  # 获取整个配置字典
-
-        for part in parts:
-            if isinstance(config, dict) and part in config:
-                config = config[part]
-            else:
-                return default
-
-        return config
+        # 使用配置管理器的get_config方法
+        return self.config_manager.get_config(path, default=default)
 
     def initialize_engine(self, engine_type: str = "vosk") -> bool:
         """初始化指定的 ASR 引擎
