@@ -1,0 +1,61 @@
+{
+  "window": {
+    "title": "实时字幕",
+    "default_width": 800,
+    "default_height": 400,
+    "default_position_x": 100,
+    "default_position_y": 100,
+    "opacity": 0.9,
+    "always_on_top": true,
+    "background_mode": "translucent"
+  },
+  "fonts": {
+    "subtitle": {
+      "family": "Arial",
+      "size": {
+        "small": 16,
+        "medium": 24,
+        "large": 32
+      },
+      "weight": "bold",
+      "color": "#FFFFFF"
+    },
+    "menu": {
+      "family": "Arial",
+      "size": 12,
+      "weight": "normal",
+      "color": "#FFFFFF"
+    },
+    "buttons": {
+      "family": "Arial",
+      "size": 12,
+      "weight": "bold",
+      "color": "#FFFFFF"
+    }
+  },
+  "colors": {
+    "background": "#000000",
+    "subtitle_background": "rgba(0, 0, 0, 150)",
+    "button_start": "rgba(50, 150, 50, 200)",
+    "button_stop": "rgba(150, 50, 50, 200)",
+    "menu_background": "rgba(60, 60, 60, 255)"
+  },
+  "styles": {
+    "subtitle_padding": 15,
+    "subtitle_border_radius": 10,
+    "button_padding": "8px 20px",
+    "button_border_radius": 4
+  },
+  "menu": {
+    "colors": {
+      "background": "rgba(60, 60, 60, 255)",
+      "text": "#FFFFFF",
+      "highlight": "#4A90E2",
+      "disabled": "#999999"
+    },
+    "spacing": {
+      "item_padding": "6px 12px",
+      "separator_margin": "4px 0px"
+    }
+  }
+}

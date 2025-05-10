@@ -1,0 +1,33 @@
+{
+    "id": "vosk_small",
+    "name": "Vosk Small Model",
+    "version": "1.0.0",
+    "type": "asr",
+    "description": "Vosk小型英语语音识别模型",
+    "author": "RealtimeTrans Team",
+    "module": "src.core.plugins.asr.vosk.vosk_plugin",
+    "class": "VoskPlugin",
+    "config_schema": {
+        "path": {
+            "type": "path",
+            "label": "模型路径",
+            "description": "Vosk模型文件夹路径",
+            "default": "models/asr/vosk/vosk-model-small-en-us-0.15",
+            "is_dir": true
+        },
+        "sample_rate": {
+            "type": "number",
+            "label": "采样率",
+            "description": "音频采样率（Hz）",
+            "default": 16000,
+            "min": 8000,
+            "max": 48000
+        },
+        "use_words": {
+            "type": "boolean",
+            "label": "使用单词时间戳",
+            "description": "是否输出单词级别的时间戳",
+            "default": true
+        }
+    }
+}

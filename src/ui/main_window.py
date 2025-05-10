@@ -14,11 +14,13 @@ from PyQt5.QtCore import Qt, pyqtSlot, QTimer
 from src.ui.menu.main_menu import MainMenu
 from src.ui.widgets.subtitle_widget import SubtitleWidget
 from src.ui.widgets.control_panel import ControlPanel
+from src.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
+from src.ui.dialogs.model_manager_dialog import ModelManagerDialog  # type: ignore
 from src.core.signals import TranscriptionSignals
 from src.core.asr.model_manager import ASRModelManager
 from src.core.audio.audio_processor import AudioProcessor
-from src.utils.config_manager import config_manager
-from src.utils.com_handler import com_handler
+from src.utils.config_manager import config_manager  # type: ignore
+from src.utils.com_handler import com_handler  # type: ignore
 
 # 条件导入 FileTranscriber
 try:
@@ -208,6 +210,8 @@ class MainWindow(QMainWindow):
         # 连接控制面板信号
         self.control_panel.start_clicked.connect(self._on_start_clicked)
         self.control_panel.stop_clicked.connect(self._on_stop_clicked)
+
+        # 模型管理菜单信号已在 MainMenu.connect_signals 中连接
 
     def _load_default_model(self):
         """加载默认模型"""
@@ -1586,6 +1590,9 @@ class MainWindow(QMainWindow):
                     def error(self, msg): print(f"ERROR: {msg}")
                 sherpa_logger = DummyLogger()
 
+            # 导入配置管理器
+            from src.utils.config_manager import config_manager
+
             # 获取窗口几何信息
             geometry = self.geometry()
 
@@ -1598,28 +1605,20 @@ class MainWindow(QMainWindow):
                 "opacity": self.windowOpacity()
             }
 
+            # 如果有背景模式属性，也保存它
+            if hasattr(self, 'background_mode'):
+                window_state["background_mode"] = self.background_mode
+
             sherpa_logger.debug(f"保存窗口状态: {window_state}")
 
-            # 检查self.config的类型
-            sherpa_logger.debug(f"save_window_state: self.config类型: {type(self.config)}")
-
-            # 根据self.config的类型更新配置
-            if hasattr(self.config, 'update_and_save'):
-                # 如果是ConfigManager实例
-                sherpa_logger.debug("使用ConfigManager.update_and_save方法更新配置")
-                self.config.update_and_save("window", window_state)
-            elif isinstance(self.config, dict):
-                # 如果是字典，直接更新字典
-                sherpa_logger.debug("使用字典方式更新配置")
-                if "window" not in self.config:
-                    self.config["window"] = {}
-                self.config["window"].update(window_state)
-                sherpa_logger.debug("配置已更新，但无法保存到文件（字典模式）")
-            else:
-                # 如果是其他类型，记录警告
-                sherpa_logger.warning(f"未知的config类型: {type(self.config)}，无法保存窗口状态")
-
-            sherpa_logger.debug("窗口状态保存完成")
+            # 使用config_manager保存窗口状态
+            try:
+                from src.utils.config_manager import config_manager
+                config_manager.update_and_save("window", window_state)
+                sherpa_logger.debug("窗口状态保存完成")
+            except Exception as e:
+                sherpa_logger.error(f"保存窗口状态时出错: {str(e)}")
+                sherpa_logger.error(traceback.format_exc())
 
         except Exception as e:
             print(f"保存窗口状态错误: {e}")
@@ -1695,23 +1694,17 @@ class MainWindow(QMainWindow):
                     def error(self, msg): print(f"ERROR: {msg}")
                 sherpa_logger = DummyLogger()
 
-            # 检查self.config的类型
-            sherpa_logger.debug(f"load_window_state: self.config类型: {type(self.config)}")
+            # 导入配置管理器
+            from src.utils.config_manager import config_manager
+            sherpa_logger.debug("使用config_manager获取窗口配置")
 
-            # 获取窗口配置
-            if hasattr(self.config, 'get_config'):
-                # 如果是ConfigManager实例
-                sherpa_logger.debug("使用ConfigManager.get_config方法获取窗口配置")
-                window_config = self.config.get_config("window", {})
-                ui_config = self.config.get_config("ui", {})
-            elif isinstance(self.config, dict):
-                # 如果是字典
-                sherpa_logger.debug("使用字典方式获取窗口配置")
-                window_config = self.config.get("window", {})
-                ui_config = self.config.get("ui", {})
-            else:
-                # 如果是其他类型，使用默认值
-                sherpa_logger.warning(f"未知的config类型: {type(self.config)}，使用默认配置")
+            try:
+                # 获取窗口配置
+                window_config = config_manager.get_config("window", {})
+                ui_config = config_manager.get_config("ui", {})
+            except Exception as e:
+                sherpa_logger.error(f"获取配置时出错: {str(e)}")
+                sherpa_logger.error(traceback.format_exc())
                 window_config = {}
                 ui_config = {}
 
@@ -1837,3 +1830,114 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logging.error(f"处理文件错误: {e}")
             self.signals.error_occurred.emit(f"处理文件错误: {e}")
+
+    def _show_plugin_manager(self):
+        """显示插件管理对话框"""
+        try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，使用标准日志
+                sherpa_logger = self.logger
+
+            sherpa_logger.info("显示插件管理对话框")
+
+            # 创建插件管理对话框
+            dialog = PluginManagerDialog(self)
+
+            # 连接插件状态变更信号
+            dialog.plugin_status_changed.connect(self._on_plugin_status_changed)
+
+            # 显示对话框
+            dialog.exec_()
+
+        except Exception as e:
+            self.logger.error(f"显示插件管理对话框时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.error_occurred.emit(f"显示插件管理对话框时出错: {str(e)}")
+
+    def _show_model_manager(self):
+        """显示模型管理对话框"""
+        try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，使用标准日志
+                sherpa_logger = self.logger
+
+            sherpa_logger.info("显示模型管理对话框")
+
+            # 创建模型管理对话框
+            dialog = ModelManagerDialog(self)
+
+            # 连接模型变更信号
+            dialog.models_changed.connect(self._on_models_changed)
+
+            # 显示对话框
+            dialog.exec_()
+
+        except Exception as e:
+            self.logger.error(f"显示模型管理对话框时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.error_occurred.emit(f"显示模型管理对话框时出错: {str(e)}")
+
+    def _on_models_changed(self):
+        """模型配置变更处理"""
+        try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，使用标准日志
+                sherpa_logger = self.logger
+
+            sherpa_logger.info("模型配置已变更，更新模型列表")
+
+            # 更新模型菜单
+            self.menu_bar.model_menu.update_models()
+
+            # 更新状态栏
+            self.signals.status_updated.emit("模型配置已更新")
+
+        except Exception as e:
+            self.logger.error(f"处理模型配置变更时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.error_occurred.emit(f"处理模型配置变更时出错: {str(e)}")
+
+    def _on_plugin_status_changed(self, plugin_id, enabled):
+        """插件状态变更处理
+
+        Args:
+            plugin_id: 插件ID
+            enabled: 是否启用
+        """
+        try:
+            # 导入日志工具
+            try:
+                from src.utils.sherpa_logger import sherpa_logger
+            except ImportError:
+                # 如果导入失败，使用标准日志
+                sherpa_logger = self.logger
+
+            sherpa_logger.info(f"插件状态变更: {plugin_id} {'启用' if enabled else '禁用'}")
+
+            # 如果是ASR插件，可能需要重新加载模型
+            from src.core.plugins import PluginManager
+            plugin_manager = PluginManager()
+
+            # 获取插件元数据
+            metadata = plugin_manager.get_plugin_metadata(plugin_id)
+            if metadata and metadata.get('type') == 'asr':
+                sherpa_logger.info(f"ASR插件状态变更，重新加载模型列表")
+
+                # 更新模型菜单
+                self.menu_bar.model_menu.update_models()
+
+                # 更新状态栏
+                self.signals.status_updated.emit(f"ASR插件 {plugin_id} 已{'启用' if enabled else '禁用'}")
+
+        except Exception as e:
+            self.logger.error(f"处理插件状态变更时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
