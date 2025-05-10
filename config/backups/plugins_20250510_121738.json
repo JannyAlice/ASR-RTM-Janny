@@ -30,7 +30,7 @@
             }
         },
         "vosk_small": {
-            "enabled": false
+            "enabled": true
         }
     },
     "plugin_system": {
