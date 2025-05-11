@@ -11,7 +11,8 @@ import traceback
 from PyQt5.QtWidgets import QMainWindow, QVBoxLayout, QWidget, QFileDialog, QMessageBox
 from PyQt5.QtCore import Qt, pyqtSlot, QTimer
 
-from src.ui.menu.main_menu import MainMenu
+# 导入新的菜单类
+from src.ui.menu.main_menu_new import MainMenu
 from src.ui.widgets.subtitle_widget import SubtitleWidget
 from src.ui.widgets.control_panel import ControlPanel
 from src.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
@@ -219,10 +220,26 @@ class MainWindow(QMainWindow):
         default_model = self.config_manager.get_default_model()
         self.logger.info(f"获取默认模型: {default_model}")
 
-        # 更新菜单选中状态
-        for key, action in self.menu_bar.model_menu.actions.items():
-            if key in ['vosk_small', 'sherpa_onnx_int8', 'sherpa_onnx_std', 'sherpa_0626_int8', 'sherpa_0626_std']:
-                action.setChecked(key == default_model)
+        # 更新菜单选中状态 - 使用新的菜单结构
+        try:
+            # 检查是否使用新的菜单结构
+            if hasattr(self.menu_bar, 'transcription_menu') and hasattr(self.menu_bar.transcription_menu, 'actions'):
+                # 新的菜单结构
+                for model_id, action in self.menu_bar.transcription_menu.actions.items():
+                    if model_id in ['vosk_small', 'vosk_medium', 'vosk_large',
+                                   'sherpa_0220_int8', 'sherpa_0220_std',
+                                   'sherpa_0621_int8', 'sherpa_0621_std',
+                                   'sherpa_0626_int8', 'sherpa_0626_std']:
+                        if action.isCheckable():
+                            action.setChecked(model_id == default_model)
+            # 兼容旧的菜单结构
+            elif hasattr(self.menu_bar, 'model_menu') and hasattr(self.menu_bar.model_menu, 'actions'):
+                for key, action in self.menu_bar.model_menu.actions.items():
+                    if key in ['vosk_small', 'sherpa_onnx_int8', 'sherpa_onnx_std', 'sherpa_0626_int8', 'sherpa_0626_std']:
+                        action.setChecked(key == default_model)
+        except Exception as e:
+            self.logger.error(f"更新菜单选中状态时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
 
         # 加载模型
         if self.model_manager.load_model(default_model):
@@ -1549,21 +1566,7 @@ class MainWindow(QMainWindow):
             print(traceback.format_exc())
             self.signals.error_occurred.emit(f"保存ASR配置错误: {e}")
 
-    def search_model_documentation(self):
-        """搜索模型文档"""
-        # 这里是搜索模型文档的占位代码
-        QMessageBox.information(self, "模型文档", "请访问项目文档获取更多信息。")
-
-    def toggle_speaker_identification(self, enabled):
-        """
-        切换说话人识别
-
-        Args:
-            enabled: 是否启用
-        """
-        # 这里是切换说话人识别的占位代码
-        status = "启用" if enabled else "禁用"
-        self.signals.status_updated.emit(f"已{status}说话人识别")
+    # 这些方法已在文件末尾重新实现，这里删除以避免重复
 
     def show_usage(self):
         """显示使用说明"""
@@ -1831,31 +1834,7 @@ class MainWindow(QMainWindow):
             logging.error(f"处理文件错误: {e}")
             self.signals.error_occurred.emit(f"处理文件错误: {e}")
 
-    def _show_plugin_manager(self):
-        """显示插件管理对话框"""
-        try:
-            # 导入日志工具
-            try:
-                from src.utils.sherpa_logger import sherpa_logger
-            except ImportError:
-                # 如果导入失败，使用标准日志
-                sherpa_logger = self.logger
-
-            sherpa_logger.info("显示插件管理对话框")
-
-            # 创建插件管理对话框
-            dialog = PluginManagerDialog(self)
-
-            # 连接插件状态变更信号
-            dialog.plugin_status_changed.connect(self._on_plugin_status_changed)
-
-            # 显示对话框
-            dialog.exec_()
-
-        except Exception as e:
-            self.logger.error(f"显示插件管理对话框时出错: {str(e)}")
-            self.logger.error(traceback.format_exc())
-            self.signals.error_occurred.emit(f"显示插件管理对话框时出错: {str(e)}")
+    # 此方法已在文件末尾重新实现，这里删除以避免重复
 
     def _show_model_manager(self):
         """显示模型管理对话框"""
@@ -1941,3 +1920,230 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"处理插件状态变更时出错: {str(e)}")
             self.logger.error(traceback.format_exc())
+            self.signals.error_occurred.emit(f"处理插件状态变更时出错: {str(e)}")
+
+    # 以下是新增的方法，用于支持新的菜单结构
+
+    def set_language_mode(self, mode):
+        """
+        设置语言模式
+
+        Args:
+            mode: 语言模式，可选值为"en"、"zh"、"auto"
+        """
+        try:
+            self.logger.info(f"设置语言模式: {mode}")
+
+            # 更新配置
+            self.config_manager.set_config(mode, "recognition", "language_mode")
+            self.config_manager.save_config("main")
+
+            # 更新状态栏
+            self.signals.status_updated.emit(f"已设置语言模式: {self._get_language_mode_display(mode)}")
+
+            # 在字幕窗口显示语言设置信息
+            language_info = f"已设置识别语言: {self._get_language_mode_display(mode)}"
+
+            # 只有在没有进行转录时才更新字幕窗口
+            if hasattr(self.control_panel, 'is_transcribing') and not self.control_panel.is_transcribing:
+                self.subtitle_widget.transcript_text = []
+                info_text = f"{language_info}\n准备就绪，点击'开始转录'按钮开始捕获系统音频"
+                self.subtitle_widget.subtitle_label.setText(info_text)
+                # 滚动到顶部
+                QTimer.singleShot(100, lambda: self.subtitle_widget.verticalScrollBar().setValue(0))
+        except Exception as e:
+            self.logger.error(f"设置语言模式时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.status_updated.emit(f"设置语言模式失败: {str(e)}")
+
+    def _get_language_mode_display(self, mode):
+        """获取语言模式显示名称"""
+        if mode == "en":
+            return "英文识别"
+        elif mode == "zh":
+            return "中文识别"
+        elif mode == "auto":
+            return "自动识别"
+        return mode
+
+    def set_audio_mode(self, mode):
+        """
+        设置音频模式
+
+        Args:
+            mode: 音频模式，可选值为"system"、"file"
+        """
+        try:
+            self.logger.info(f"设置音频模式: {mode}")
+
+            # 更新配置
+            self.config_manager.set_config(mode, "recognition", "audio_mode")
+            self.config_manager.save_config("main")
+
+            # 更新状态栏
+            self.signals.status_updated.emit(f"已设置音频模式: {self._get_audio_mode_display(mode)}")
+
+            # 如果是文件模式，打开文件选择对话框
+            if mode == "file":
+                self.select_file()
+            else:
+                # 系统音频模式
+                self.is_file_mode = False
+
+                # 更新控制面板
+                if hasattr(self.control_panel, 'set_transcription_mode'):
+                    self.control_panel.set_transcription_mode("system")
+
+                # 在字幕窗口显示模式设置信息
+                mode_info = f"已设置音频模式: {self._get_audio_mode_display(mode)}"
+
+                # 只有在没有进行转录时才更新字幕窗口
+                if hasattr(self.control_panel, 'is_transcribing') and not self.control_panel.is_transcribing:
+                    # 保留现有文本，如果有的话
+                    current_text = self.subtitle_widget.subtitle_label.text()
+
+                    # 如果当前文本为空或只包含准备就绪信息，则设置新文本
+                    if not current_text or "准备就绪" in current_text:
+                        self.subtitle_widget.transcript_text = []
+                        info_text = f"{mode_info}\n准备就绪，点击'开始转录'按钮开始捕获系统音频"
+                        self.subtitle_widget.subtitle_label.setText(info_text)
+                    else:
+                        # 否则，将模式信息添加到当前文本的最下方
+                        self.subtitle_widget.subtitle_label.setText(current_text + "\n\n" + mode_info)
+
+                    # 滚动到底部，确保最新信息可见
+                    QTimer.singleShot(100, self.subtitle_widget._scroll_to_bottom)
+        except Exception as e:
+            self.logger.error(f"设置音频模式时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.status_updated.emit(f"设置音频模式失败: {str(e)}")
+
+    def _get_audio_mode_display(self, mode):
+        """获取音频模式显示名称"""
+        if mode == "system":
+            return "系统音频模式"
+        elif mode == "file":
+            return "文件音频模式"
+        return mode
+
+    def toggle_speaker_identification(self, enabled):
+        """
+        切换说话人识别功能
+
+        Args:
+            enabled: 是否启用
+        """
+        try:
+            self.logger.info(f"切换说话人识别功能: {enabled}")
+
+            # 更新配置
+            self.config_manager.set_config(enabled, "recognition", "speaker_identification")
+            self.config_manager.save_config("main")
+
+            # 更新状态栏
+            status = "启用" if enabled else "禁用"
+            self.signals.status_updated.emit(f"已{status}说话人识别功能")
+
+            # 在字幕窗口显示功能设置信息
+            feature_info = f"已{status}说话人识别功能"
+
+            # 只有在没有进行转录时才更新字幕窗口
+            if hasattr(self.control_panel, 'is_transcribing') and not self.control_panel.is_transcribing:
+                # 保留现有文本，如果有的话
+                current_text = self.subtitle_widget.subtitle_label.text()
+
+                # 如果当前文本为空或只包含准备就绪信息，则设置新文本
+                if not current_text or "准备就绪" in current_text:
+                    self.subtitle_widget.transcript_text = []
+                    info_text = f"{feature_info}\n准备就绪，点击'开始转录'按钮开始捕获系统音频"
+                    self.subtitle_widget.subtitle_label.setText(info_text)
+                else:
+                    # 否则，将功能信息添加到当前文本的最下方
+                    self.subtitle_widget.subtitle_label.setText(current_text + "\n\n" + feature_info)
+
+                # 滚动到底部，确保最新信息可见
+                QTimer.singleShot(100, self.subtitle_widget._scroll_to_bottom)
+        except Exception as e:
+            self.logger.error(f"切换说话人识别功能时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.status_updated.emit(f"切换说话人识别功能失败: {str(e)}")
+
+    def search_model_documentation(self):
+        """搜索模型文档"""
+        try:
+            self.logger.info("搜索模型文档")
+
+            # 打开浏览器搜索模型文档
+            import webbrowser
+            webbrowser.open("https://github.com/alphacep/vosk-api/wiki")
+
+            # 更新状态栏
+            self.signals.status_updated.emit("已打开模型文档搜索页面")
+        except Exception as e:
+            self.logger.error(f"搜索模型文档时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.status_updated.emit(f"搜索模型文档失败: {str(e)}")
+
+    def refresh_models(self):
+        """刷新模型列表"""
+        try:
+            self.logger.info("刷新模型列表")
+
+            # 重新加载模型列表
+            # 由于ASRModelManager没有refresh_models方法，我们使用其他方式刷新
+            # 例如，重新加载默认模型
+            default_model = self.config_manager.get_default_model()
+            if self.model_manager.load_model(default_model):
+                self.logger.info(f"已重新加载默认模型: {default_model}")
+
+            # 如果菜单有更新模型的方法，调用它
+            if hasattr(self.menu_bar, 'model_menu') and hasattr(self.menu_bar.model_menu, 'update_models'):
+                self.menu_bar.model_menu.update_models()
+                self.logger.info("已更新模型菜单")
+
+            # 更新状态栏
+            self.signals.status_updated.emit("模型列表已刷新")
+        except Exception as e:
+            self.logger.error(f"刷新模型列表时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.status_updated.emit(f"刷新模型列表失败: {str(e)}")
+
+    def refresh_plugins(self):
+        """刷新插件"""
+        try:
+            self.logger.info("刷新插件")
+
+            # 刷新插件
+            # 由于PluginManager可能没有refresh_plugins方法，我们使用其他方式刷新
+            # 例如，重新加载插件
+            from src.core.plugins import PluginManager
+            plugin_manager = PluginManager()
+
+            # 如果有reload_plugins方法，调用它
+            if hasattr(plugin_manager, 'reload_plugins'):
+                plugin_manager.reload_plugins()
+                self.logger.info("已重新加载插件")
+
+            # 更新状态栏
+            self.signals.status_updated.emit("插件已刷新")
+        except Exception as e:
+            self.logger.error(f"刷新插件时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.status_updated.emit(f"刷新插件失败: {str(e)}")
+
+    def _show_plugin_manager(self):
+        """显示插件管理器对话框"""
+        try:
+            self.logger.info("显示插件管理器对话框")
+
+            # 创建并显示插件管理器对话框
+            from src.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
+            dialog = PluginManagerDialog(self)
+            dialog.exec_()
+
+            # 对话框关闭后，刷新插件
+            self.refresh_plugins()
+        except Exception as e:
+            self.logger.error(f"显示插件管理器对话框时出错: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            self.signals.error_occurred.emit(f"显示插件管理器对话框失败: {str(e)}")

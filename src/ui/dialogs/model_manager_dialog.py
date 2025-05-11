@@ -192,21 +192,9 @@ class ModelManagerDialog(QDialog):
         vosk_button_layout = QHBoxLayout()
         self.add_vosk_button = QPushButton("添加", self.vosk_tab)
         self.add_vosk_button.clicked.connect(lambda: self._add_model("vosk"))
-        self.edit_vosk_button = QPushButton("编辑", self.vosk_tab)
-        self.edit_vosk_button.clicked.connect(lambda: self._edit_selected_model("vosk"))
-        self.edit_vosk_button.setEnabled(False)  # 初始禁用
-        self.delete_vosk_button = QPushButton("删除", self.vosk_tab)
-        self.delete_vosk_button.clicked.connect(lambda: self._delete_selected_model("vosk"))
-        self.delete_vosk_button.setEnabled(False)  # 初始禁用
-
         vosk_button_layout.addWidget(self.add_vosk_button)
-        vosk_button_layout.addWidget(self.edit_vosk_button)
-        vosk_button_layout.addWidget(self.delete_vosk_button)
         vosk_button_layout.addStretch()
         self.vosk_layout.addLayout(vosk_button_layout)
-
-        # 连接选择变化信号
-        self.vosk_table.itemSelectionChanged.connect(lambda: self._update_button_states("vosk"))
 
         # --- Sherpa-ONNX模型选项卡 ---
         self.sherpa_tab = QWidget()
@@ -224,21 +212,9 @@ class ModelManagerDialog(QDialog):
         sherpa_button_layout = QHBoxLayout()
         self.add_sherpa_button = QPushButton("添加", self.sherpa_tab)
         self.add_sherpa_button.clicked.connect(lambda: self._add_model("sherpa_onnx"))
-        self.edit_sherpa_button = QPushButton("编辑", self.sherpa_tab)
-        self.edit_sherpa_button.clicked.connect(lambda: self._edit_selected_model("sherpa_onnx"))
-        self.edit_sherpa_button.setEnabled(False)  # 初始禁用
-        self.delete_sherpa_button = QPushButton("删除", self.sherpa_tab)
-        self.delete_sherpa_button.clicked.connect(lambda: self._delete_selected_model("sherpa_onnx"))
-        self.delete_sherpa_button.setEnabled(False)  # 初始禁用
-
         sherpa_button_layout.addWidget(self.add_sherpa_button)
-        sherpa_button_layout.addWidget(self.edit_sherpa_button)
-        sherpa_button_layout.addWidget(self.delete_sherpa_button)
         sherpa_button_layout.addStretch()
         self.sherpa_layout.addLayout(sherpa_button_layout)
-
-        # 连接选择变化信号
-        self.sherpa_table.itemSelectionChanged.connect(lambda: self._update_button_states("sherpa_onnx"))
 
         # 添加ASR子选项卡
         self.asr_tab_widget.addTab(self.vosk_tab, "Vosk模型")
