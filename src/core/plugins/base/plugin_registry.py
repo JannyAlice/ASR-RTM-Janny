@@ -96,7 +96,13 @@ class PluginRegistry:
 
             # 创建插件实例
             plugin_class = self.plugins[plugin_id]
-            plugin = plugin_class()
+            # 检查插件类的__init__方法是否接受参数
+            if hasattr(plugin_class, '__init__') and plugin_class.__init__.__code__.co_argcount > 1:
+                # 如果插件类的__init__方法接受参数，则传入空字典
+                plugin = plugin_class({})
+            else:
+                # 否则不传入参数
+                plugin = plugin_class()
 
             # 初始化插件
             if not plugin.initialize():

@@ -26,6 +26,11 @@
                     "rule3_min_utterance_length": 20.0,
                     "max_active_paths": 4,
                     "buffer_size": 8000
+                },
+                "metadata": {
+                    "path": "src/core/plugins/asr/sherpa_0626_plugin",
+                    "module": "src.core.plugins.asr.sherpa_0626_plugin",
+                    "class": "Sherpa0626Plugin"
                 }
             }
         },

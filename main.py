@@ -62,8 +62,18 @@ def main():
 
         # 5. 注册插件
         from src.core.plugins.asr.vosk_plugin import VoskPlugin
+        from src.core.plugins.asr.sherpa_onnx_plugin import SherpaOnnxPlugin
+
+        # 注册Vosk插件
         plugin_registry.register("vosk_small", VoskPlugin)
         logger.info("注册Vosk插件成功")
+
+        # 注册Sherpa-ONNX插件（支持所有sherpa-onnx系列模型）
+        plugin_registry.register("sherpa_onnx_std", SherpaOnnxPlugin)
+        plugin_registry.register("sherpa_onnx_int8", SherpaOnnxPlugin)
+        plugin_registry.register("sherpa_0626_std", SherpaOnnxPlugin)
+        plugin_registry.register("sherpa_0626_int8", SherpaOnnxPlugin)
+        logger.info("注册Sherpa-ONNX插件成功")
 
         # 6. 创建ASR管理器
         asr_manager = ASRModelManager()
