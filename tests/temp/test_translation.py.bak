@@ -1,0 +1,153 @@
+import os
+import unittest
+from typing import Tuple, Optional
+from pathlib import Path
+from src.core.translation import OpusMTEngine, ArgosEngine, TranslationManager
+
+class TestOpusMTEngine(unittest.TestCase):
+    """测试 OPUS-MT 翻译引擎"""
+    
+    def setUp(self):
+        """测试前的准备工作"""
+        # 设置测试模型路径
+        self.model_path = Path('models/translation/opus-mt/en-zh')
+        self.engine = OpusMTEngine(model_path=self.model_path)
+    
+    def test_initialization(self):
+        """测试引擎初始化"""
+        self.assertIsNotNone(self.engine.tokenizer)
+        self.assertIsNotNone(self.engine.pytorch_model)
+    
+    def test_translate(self):
+        """测试翻译功能"""
+        # 测试简单句子
+        text = "Hello, how are you?"
+        result = self.engine.translate(text)
+        
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 0)
+        
+        # 测试空输入
+        result = self.engine.translate("")
+        self.assertIsNone(result)
+
+    def test_batch_translate(self):
+        """测试批量翻译"""
+        texts = [
+            "Hello, how are you?",
+            "The weather is nice today.",
+            "I love programming."
+        ]
+        results = self.engine.batch_translate(texts)
+        
+        self.assertEqual(len(results), len(texts))
+        for result in results:
+            self.assertIsInstance(result, str)
+            self.assertGreater(len(result), 0)
+
+class TestArgosEngine(unittest.TestCase):
+    """测试 ArgosTranslate 翻译引擎"""
+    
+    def setUp(self):
+        """测试前的准备工作"""
+        self.model_path = Path('models/translation/argos/en_zh')
+        self.engine = ArgosEngine(model_path=self.model_path)
+    
+    def test_initialization(self):
+        """测试引擎初始化"""
+        self.assertTrue(self.engine.is_ready())
+        self.assertIsNotNone(self.engine.translator)
+    
+    def test_translate(self):
+        """测试翻译功能"""
+        # 测试简单句子
+        text = "Hello, how are you?"
+        result = self.engine.translate(text)
+        
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 0)
+        
+        # 测试空输入
+        result = self.engine.translate("")
+        self.assertIsNone(result)
+
+class TestTranslationManager(unittest.TestCase):
+    """测试翻译管理器"""
+    
+    def setUp(self):
+        """测试前的准备工作"""
+        config = {
+            'opus_mt': {
+                'model_path': 'models/translation/opus-mt/en-zh'
+            },
+            'argos': {
+                'model_path': 'models/translation/argos/en_zh'
+            }
+        }
+        self.manager = TranslationManager(config=config)
+    
+    def test_initialization(self):
+        """测试管理器初始化"""
+        self.assertIsNotNone(self.manager.engines)
+        self.assertIn('opus_mt', self.manager.engines)
+        self.assertIn('argos', self.manager.engines)
+        self.assertEqual(self.manager.current_engine, 'opus_mt')
+    
+    def test_engine_switching(self):
+        """测试引擎切换"""
+        # 切换到 Argos
+        success = self.manager.set_engine('argos')
+        self.assertTrue(success)
+        self.assertEqual(self.manager.current_engine, 'argos')
+        
+        # 测试切换到不存在的引擎
+        success = self.manager.set_engine('nonexistent')
+        self.assertFalse(success)
+        self.assertEqual(self.manager.current_engine, 'argos')
+    
+    def test_translate(self):
+        """测试翻译功能"""
+        text = "Hello, how are you?"
+        
+        # 使用默认引擎（OpusMT）
+        result = self.manager.translate(text)
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 0)
+        
+        # 使用 Argos 引擎
+        self.manager.set_engine('argos')
+        result = self.manager.translate(text)
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 0)
+
+    def test_batch_translate(self):
+        """测试批量翻译"""
+        texts = [
+            "Hello, how are you?",
+            "The weather is nice today.",
+            "I love programming."
+        ]
+        
+        # 使用默认引擎
+        results = self.manager.batch_translate(texts)
+        self.assertEqual(len(results), len(texts))
+        for result in results:
+            self.assertIsInstance(result, str)
+            self.assertGreater(len(result), 0)
+
+def create_test_suite():
+    """创建测试套件"""
+    suite = unittest.TestSuite()
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestOpusMTEngine))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestArgosEngine))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestTranslationManager))
+    return suite
+
+if __name__ == '__main__':
+    runner = unittest.TextTestRunner(verbosity=2)
+    test_suite = create_test_suite()
+    runner.run(test_suite)

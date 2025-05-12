@@ -1,0 +1,26 @@
+{
+    "window": {
+        "pos_x": 100,
+        "pos_y": 100,
+        "width": 800,
+        "height": 600,
+        "background_mode": "translucent",
+        "opacity": 0.7
+    },
+    "ui": {
+        "font_size": 12,
+        "font_family": "Microsoft YaHei",
+        "theme": "dark"
+    },
+    "transcription": {
+        "default_model": "vosk",
+        "language": "zh",
+        "sample_rate": 16000
+    },
+    "asr": {
+        "enable_endpoint": 1,
+        "rule1_min_trailing_silence": 3.0,
+        "rule2_min_trailing_silence": 1.5,
+        "rule3_min_utterance_length": 25
+    }
+}

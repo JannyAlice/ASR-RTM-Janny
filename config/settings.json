@@ -1,0 +1,20 @@
+{
+    "window": {
+        "pos_x": 100,
+        "pos_y": 100,
+        "width": 800,
+        "height": 600,
+        "background_mode": "translucent",
+        "opacity": 0.6980392156862745
+    },
+    "ui": {
+        "font_size": 12,
+        "font_family": "Microsoft YaHei",
+        "theme": "dark"
+    },
+    "transcription": {
+        "default_model": "vosk_small",
+        "language": "zh",
+        "sample_rate": 16000
+    }
+}

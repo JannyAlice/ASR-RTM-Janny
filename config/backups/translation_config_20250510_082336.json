@@ -1,0 +1,33 @@
+{
+    "default_engine": "opus_mt",
+    "engines": {
+        "opus_mt": {
+            "enabled": true,
+            "model_dir": "C:/Users/crige/RealtimeTrans/vosk-api/models/translation/opus-mt/en-zh",
+            "use_onnx": true,
+            "onnx_config": {
+                "use_io_binding": false,
+                "num_beams": 4,
+                "early_stopping": true,
+                "length_penalty": 0.6
+            }
+        },
+        "argos": {
+            "enabled": true,
+            "model_dir": "C:/Users/crige/RealtimeTrans/vosk-api/models/translation/argos-translate/packages/translate-en_zh-1_9",
+            "languages": {
+                "source": "en",
+                "target": "zh"
+            }
+        }
+    },
+    "performance": {
+        "batch_size": 1,
+        "max_length": 512,
+        "cache_size": 1000
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "logs/translation.log"
+    }
+} 

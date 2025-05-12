@@ -1,0 +1,47 @@
+{
+    "plugins": {
+        "asr": {
+            "vosk_small": {
+                "enabled": true,
+                "type": "asr",
+                "model_config": "vosk_small",
+                "plugin_config": {
+                    "use_words": true,
+                    "show_confidence": false,
+                    "buffer_size": 4000,
+                    "show_all_results": false
+                }
+            },
+            "sherpa_0626_std": {
+                "enabled": true,
+                "type": "asr",
+                "model_config": "sherpa_0626_std",
+                "plugin_config": {
+                    "feature_dim": 80,
+                    "num_threads": 1,
+                    "debug": false,
+                    "enable_endpoint_detection": true,
+                    "rule1_min_trailing_silence": 2.4,
+                    "rule2_min_trailing_silence": 1.2,
+                    "rule3_min_utterance_length": 20.0,
+                    "max_active_paths": 4,
+                    "buffer_size": 8000
+                }
+            }
+        },
+        "vosk_small": {
+            "enabled": true
+        }
+    },
+    "plugin_system": {
+        "version": "1.0.0",
+        "config_reference": "config.json",
+        "logging": {
+            "enabled": true,
+            "level": "INFO",
+            "file": "logs/plugins.log"
+        },
+        "auto_reload": true,
+        "allow_hot_reload": true
+    }
+}

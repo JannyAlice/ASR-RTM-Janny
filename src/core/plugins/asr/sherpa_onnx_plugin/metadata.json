@@ -1,0 +1,23 @@
+{
+    "id": "sherpa_onnx_plugin",
+    "name": "Sherpa-ONNX Plugin",
+    "version": "1.0.0",
+    "description": "Sherpa-ONNX 语音识别插件，支持所有sherpa-onnx系列模型",
+    "author": "RealtimeTrans Team",
+    "type": "asr",
+    "module": "src.core.plugins.asr.sherpa_onnx_plugin",
+    "class": "SherpaOnnxPlugin",
+    "models": [
+        "sherpa_onnx_std",
+        "sherpa_onnx_int8",
+        "sherpa_0626_std",
+        "sherpa_0626_int8"
+    ],
+    "dependencies": [
+        "sherpa_onnx>=1.11.2",
+        "numpy"
+    ],
+    "optional_dependencies": [
+        "soundcard"
+    ]
+}

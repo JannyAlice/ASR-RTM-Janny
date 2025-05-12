@@ -1,0 +1,17 @@
+{
+    "python.defaultInterpreterPath": "C:\\Users\\crige\\anaconda3\\envs\\vosk-api\\python.exe",
+    "python.terminal.activateEnvironment": true,
+    "terminal.integrated.shellIntegration.enabled": true,
+    "terminal.integrated.defaultProfile.windows": "Command Prompt",
+    "python.condaPath": "C:\\Users\\crige\\anaconda3\\Scripts\\conda.exe",
+    "terminal.integrated.profiles.windows": {
+        "Command Prompt": {
+            "path": "cmd.exe",
+            "args": ["/K", "C:\\Users\\crige\\anaconda3\\Scripts\\activate.bat vosk-api"]
+        }
+    },
+    "terminal.integrated.automationProfile.windows": {
+        "path": "cmd.exe",
+        "args": ["/K", "C:\\Users\\crige\\anaconda3\\Scripts\\activate.bat vosk-api"]
+    }
+}
