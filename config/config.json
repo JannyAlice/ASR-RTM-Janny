@@ -161,5 +161,8 @@
         "width": 962,
         "height": 433,
         "opacity": 0.8980392156862745
+    },
+    "recognition": {
+        "audio_mode": "system"
     }
 }

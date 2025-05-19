@@ -1219,8 +1219,8 @@ class MainWindow(QMainWindow):
                 self.control_panel.set_transcription_mode("system")
 
             # 更新菜单选中状态
-            self.menu_bar.transcription_menu.system_audio_action.setChecked(True)
-            self.menu_bar.transcription_menu.actions['select_file'].setChecked(False)
+            self.menu_bar.transcription_menu.actions['system_audio'].setChecked(True)
+            self.menu_bar.transcription_menu.actions['file_audio'].setChecked(False)
 
         # 设置语言
         print(f"设置识别语言: {language}")
@@ -1764,8 +1764,8 @@ class MainWindow(QMainWindow):
             self.is_file_mode = True
 
             # 更新菜单选中状态
-            self.menu_bar.transcription_menu.system_audio_action.setChecked(False)
-            self.menu_bar.transcription_menu.actions['select_file'].setChecked(True)
+            self.menu_bar.transcription_menu.actions['system_audio'].setChecked(False)
+            self.menu_bar.transcription_menu.actions['file_audio'].setChecked(True)
 
             # 更新状态
             self.signals.status_updated.emit(f"已选择文件: {os.path.basename(file_path)}")
