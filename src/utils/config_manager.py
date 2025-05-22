@@ -100,7 +100,10 @@ class ConfigManager:
             return self._config
 
     def _init_default_config(self):
-        """初始化默认配置"""
+        """
+        初始化默认配置
+        注意：所有模型路径、采样率、use_words 等参数均应通过 config/models.json 配置，禁止硬编码和相对路径。
+        """
         self._config = {
             "app": {
                 "name": "实时字幕",
@@ -109,13 +112,14 @@ class ConfigManager:
             "asr": {
                 "default_model": "vosk_small",
                 "models": {
+                    # 仅保留模型ID、类型、参数说明，实际路径等请在 config/models.json 配置
                     "vosk_small": {
                         "name": "VOSK Small Model",
-                        "path": "models/asr/vosk/vosk-model-small-en-us-0.15",
+                        "path": "",  # 路径请在 config/models.json 配置
                         "type": "vosk",
                         "config": {
-                            "sample_rate": 16000,
-                            "use_words": True
+                            "sample_rate": None,  # 采样率请在 config/models.json 配置
+                            "use_words": None     # use_words 请在 config/models.json 配置
                         }
                     }
                 }
@@ -131,7 +135,7 @@ class ConfigManager:
                 "transcripts_dir": "transcripts"
             }
         }
-        logger.info("已初始化默认配置")
+        logger.info("已初始化默认配置（模型路径等请通过 config/models.json 配置）")
 
     def save_config(self, section: Optional[str] = None) -> bool:
         """保存配置

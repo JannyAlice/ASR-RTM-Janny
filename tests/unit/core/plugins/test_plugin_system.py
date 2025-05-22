@@ -7,12 +7,24 @@ from src.core.plugins.base.plugin_initializer import PluginInitializer
 from src.core.plugins.base.plugin_registry import PluginRegistry
 from src.core.plugins.asr.vosk_plugin import VoskPlugin
 from src.core.plugins.asr.asr_plugin_adapter import ASRPluginAdapter
+from src.utils.config_manager import config_manager
 
 class TestPluginSystem(unittest.TestCase):
     """插件系统集成测试"""
     
     def setUp(self):
         """测试前的准备工作"""
+        # 初始化 vosk_small 配置，避免 NoneType 错误
+        from src.utils.config_manager import config_manager
+        config_manager.set_config({
+            "name": "VOSK Small Model",
+            "path": "/mock/absolute/path/to/vosk-model-small-en-us-0.15",  # 可根据实际测试环境调整
+            "type": "vosk",
+            "config": {
+                "sample_rate": 16000,
+                "use_words": True
+            }
+        }, 'asr', 'models', 'vosk_small')
         # 创建临时目录
         self.temp_dir = tempfile.mkdtemp()
         
@@ -25,7 +37,8 @@ class TestPluginSystem(unittest.TestCase):
             "asr": {
                 "models": {
                     "vosk_small": {
-                        "path": "models/asr/vosk/vosk-model-small-en-us-0.15",
+                        # "path": "models/asr/vosk/vosk-model-small-en-us-0.15",
+                        "path": config_manager.get_model_config('vosk_small')["path"],  # 禁止硬编码，统一由配置管理
                         "type": "standard",
                         "enabled": True,
                         "config": {
@@ -103,7 +116,8 @@ class TestPluginSystem(unittest.TestCase):
         
         # 验证合并后的配置
         self.assertEqual(merged_config["model_path"], 
-                        "models/asr/vosk/vosk-model-small-en-us-0.15")
+            # "models/asr/vosk/vosk-model-small-en-us-0.15")
+            config_manager.get_model_config('vosk_small')["path"])
         self.assertEqual(merged_config["config"]["buffer_size"], 8000)  # 插件配置覆盖了模型配置
         
     @patch('src.core.plugins.asr.vosk_plugin.Model')

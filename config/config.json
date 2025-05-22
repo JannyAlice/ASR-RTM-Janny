@@ -33,7 +33,7 @@
     "asr": {
         "models": {
             "vosk_small": {
-                "path": "models/asr/vosk/vosk-model-small-en-us-0.15",
+                "path": "C:\\Users\\crige\\models\\asr\\vosk\\vosk-model-small-en-us-0.15",
                 "type": "standard",
                 "enabled": true,
                 "config": {

@@ -58,6 +58,7 @@ class VoskModule:
 vosk_lib = VoskModule()
 
 from src.core.plugins.base.plugin_base import PluginBase
+from src.utils.config_manager import config_manager
 
 class VoskPlugin(PluginBase):
     """Vosk插件类"""
@@ -93,10 +94,14 @@ class VoskPlugin(PluginBase):
     def setup(self) -> bool:
         """设置插件"""
         try:
-            # 获取配置
-            model_path = self.get_config_value('path', 'models/asr/vosk/vosk-model-small-en-us-0.15')
-            self.sample_rate = self.get_config_value('sample_rate', 16000)
-            self.use_words = self.get_config_value('use_words', True)
+            # 优先从配置文件获取所有参数
+            model_path = config_manager.get_config('asr', 'models', 'vosk_small', 'path')
+            sample_rate = config_manager.get_config('asr', 'models', 'vosk_small', 'sample_rate')
+            use_words = config_manager.get_config('asr', 'models', 'vosk_small', 'use_words')
+
+            # 设置默认值
+            self.sample_rate = sample_rate if sample_rate is not None else 16000
+            self.use_words = use_words if use_words is not None else True
 
             # 检查模型路径
             if not os.path.exists(model_path):

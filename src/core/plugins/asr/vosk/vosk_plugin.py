@@ -52,6 +52,7 @@ vosk = VoskModule()
 
 from src.utils.logger import get_logger
 from src.core.plugins.base.plugin_base import PluginBase
+from src.utils.config_manager import config_manager
 
 logger = get_logger(__name__)
 
@@ -63,8 +64,8 @@ class VoskPlugin(PluginBase):
         super().__init__()
         self.model = None
         self.recognizer = None
-        self.sample_rate = 16000
-        self.use_words = True
+        self.sample_rate = None  # 由 config_manager 驱动
+        self.use_words = None    # 由 config_manager 驱动
 
     def get_id(self) -> str:
         """获取插件ID"""
@@ -87,15 +88,23 @@ class VoskPlugin(PluginBase):
         return "RealtimeTrans Team"
 
     def setup(self) -> bool:
-        """设置插件"""
+        """
+        设置插件
+        注意：所有模型路径、采样率、use_words 等参数均应通过 config/models.json 配置，禁止硬编码和相对路径。
+        """
         try:
-            # 获取配置
-            model_path = self.get_config_value('path', 'models/asr/vosk/vosk-model-small-en-us-0.15')
-            self.sample_rate = self.get_config_value('sample_rate', 16000)
-            self.use_words = self.get_config_value('use_words', True)
+            # 通过 config_manager 获取模型配置
+            model_id = self.get_id()
+            model_cfg = config_manager.get_model_config(model_id)
+            if not model_cfg:
+                logger.error(f"未找到模型配置: {model_id}")
+                return False
+            model_path = model_cfg.get('path', '')
+            self.sample_rate = model_cfg.get('config', {}).get('sample_rate', 16000)
+            self.use_words = model_cfg.get('config', {}).get('use_words', True)
 
             # 检查模型路径
-            if not os.path.exists(model_path):
+            if not model_path or not os.path.exists(model_path):
                 logger.error(f"模型路径不存在: {model_path}")
                 return False
 
